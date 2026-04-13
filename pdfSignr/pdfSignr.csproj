@@ -1,0 +1,47 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <Version>1.0.0</Version>
+    <Authors>pdfSignr Contributors</Authors>
+    <Product>pdfSignr</Product>
+    <Description>Lightweight cross-platform PDF annotation and signing tool</Description>
+    <Copyright>Copyright (c) 2026 pdfSignr Contributors</Copyright>
+    <ApplicationIcon>Assets/signature_icon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.0.0" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.0.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.0" />
+    <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.0">
+      <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
+      <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="PDFsharp" Version="6.2.4" />
+    <PackageReference Include="PDFtoImage" Version="5.2.1" />
+    <PackageReference Include="Svg.Skia" Version="3.7.0" />
+    <!-- Pin transitive dep to fix GHSA-xrw6-gwf8-vvr9 (pulled by Avalonia.FreeDesktop) -->
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.92.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets/Fonts/*.ttf" />
+    <AvaloniaResource Include="Assets/signature_icon.png" />
+    <EmbeddedResource Include="Assets/Fonts/*.ttf" />
+    <EmbeddedResource Include="Assets/Fonts/LICENSE-Liberation.txt" />
+  </ItemGroup>
+
+  <!-- Strip native debug symbols from publish output -->
+  <Target Name="RemoveNativePdbs" AfterTargets="Publish">
+    <ItemGroup>
+      <NativePdbs Include="$(PublishDir)**/*.pdb" Exclude="$(PublishDir)pdfSignr.pdb" />
+    </ItemGroup>
+    <Delete Files="@(NativePdbs)" />
+  </Target>
+</Project>

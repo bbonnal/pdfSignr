@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=pdfSignr
+Comment=Lightweight PDF annotation and signing tool
+Exec=pdfSignr
+Icon=pdfSignr
+Terminal=false
+Type=Application
+Categories=Office;Graphics;
+MimeType=application/pdf;

@@ -1,0 +1,192 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:pdfSignr.ViewModels"
+        xmlns:views="using:pdfSignr.Views"
+        x:Class="pdfSignr.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="pdfSignr"
+        Icon="avares://pdfSignr/Assets/signature_icon.png"
+        Width="900" Height="700">
+
+  <Panel>
+    <DockPanel>
+
+      <!-- ═══ Left icon toolbar ═══ -->
+      <Border DockPanel.Dock="Left" Width="46"
+              BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+              BorderThickness="0,0,1,0">
+        <DockPanel Margin="3,6,3,6">
+
+          <StackPanel DockPanel.Dock="Top" Spacing="2" HorizontalAlignment="Center">
+            <Button Classes="icon-btn" Command="{Binding OpenCommand}" ToolTip.Tip="Open PDF">
+              <PathIcon Data="{StaticResource IconFolderOpen}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
+            </Button>
+            <Button Classes="icon-btn" Command="{Binding SaveCommand}" ToolTip.Tip="Save">
+              <PathIcon Data="{StaticResource IconFloppyDisk}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
+            </Button>
+            <Button Classes="icon-btn" ToolTip.Tip="Compress / Rasterize PDF">
+              <Button.Flyout>
+                <Flyout Placement="Right">
+                  <StackPanel Width="180" Spacing="4">
+                    <TextBlock Text="Resample images" FontSize="11" FontWeight="SemiBold" Opacity="0.6" Margin="0,0,0,2" />
+                    <Button Classes="flyout-btn" Content="Screen (smallest)"
+                            Command="{Binding CompressResampleCommand}" CommandParameter="Screen" />
+                    <Button Classes="flyout-btn" Content="Ebook (balanced)"
+                            Command="{Binding CompressResampleCommand}" CommandParameter="Ebook" />
+                    <Button Classes="flyout-btn" Content="Print (best quality)"
+                            Command="{Binding CompressResampleCommand}" CommandParameter="Print" />
+                    <Border Height="1" Background="{DynamicResource SystemControlForegroundBaseLowBrush}" Margin="0,4" />
+                    <TextBlock Text="Flatten to images" FontSize="11" FontWeight="SemiBold" Opacity="0.6" Margin="0,0,0,2" />
+                    <Button Classes="flyout-btn" Content="72 DPI (screen)"
+                            Command="{Binding CompressRasterizeCommand}" CommandParameter="Screen" />
+                    <Button Classes="flyout-btn" Content="150 DPI (ebook)"
+                            Command="{Binding CompressRasterizeCommand}" CommandParameter="Ebook" />
+                    <Button Classes="flyout-btn" Content="300 DPI (print)"
+                            Command="{Binding CompressRasterizeCommand}" CommandParameter="Print" />
+                  </StackPanel>
+                </Flyout>
+              </Button.Flyout>
+              <PathIcon Data="{StaticResource IconFileArrowDown}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
+            </Button>
+            <Border Height="1" Background="{DynamicResource SystemControlForegroundBaseLowBrush}" Margin="2,5" />
+            <ToggleButton Classes="icon-btn"
+                IsChecked="{Binding IsTextToolActive, Mode=OneWay}"
+                Command="{Binding ToggleTextToolCommand}" ToolTip.Tip="{Binding TextToolTip}">
+              <PathIcon Data="{StaticResource IconTextAa}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
+            </ToggleButton>
+            <ToggleButton Classes="icon-btn"
+                IsChecked="{Binding IsSignToolActive, Mode=OneWay}"
+                Command="{Binding ToggleSignToolCommand}" ToolTip.Tip="{Binding SignToolTip}">
+              <PathIcon Data="{StaticResource IconSignature}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
+            </ToggleButton>
+          </StackPanel>
+
+          <StackPanel DockPanel.Dock="Bottom" HorizontalAlignment="Center">
+            <Button Classes="icon-btn" x:Name="ThemeToggle"
+                    Click="OnThemeToggle" ToolTip.Tip="Toggle dark/light mode">
+              <PathIcon x:Name="ThemeIcon"
+                     Data="{StaticResource IconSun}"
+                     Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
+            </Button>
+          </StackPanel>
+
+          <Panel />
+        </DockPanel>
+      </Border>
+
+      <!-- ═══ Status bar ═══ -->
+      <Border DockPanel.Dock="Bottom"
+              BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+              BorderThickness="0,1,0,0" Padding="10,2">
+        <DockPanel>
+          <!-- Right: zoom controls -->
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4"
+                      VerticalAlignment="Center">
+            <Button Click="OnFitToWidth" ToolTip.Tip="Fit to width (Ctrl+0)"
+                    Padding="3,2" Background="Transparent" BorderThickness="0" Cursor="Hand" Opacity="0.6">
+              <PathIcon Data="{StaticResource IconMagnifyingGlass}" Foreground="{DynamicResource IconForeground}" Width="15" Height="15" />
+            </Button>
+            <Button Click="OnZoomOut" ToolTip.Tip="Zoom out (Ctrl+-)"
+                    Padding="3,2" Background="Transparent" BorderThickness="0" Cursor="Hand" Opacity="0.6">
+              <PathIcon Data="{StaticResource IconMagnifyingGlassMinus}" Foreground="{DynamicResource IconForeground}" Width="15" Height="15" />
+            </Button>
+            <Button Click="OnZoomIn" ToolTip.Tip="Zoom in (Ctrl++)"
+                    Padding="3,2" Background="Transparent" BorderThickness="0" Cursor="Hand" Opacity="0.6">
+              <PathIcon Data="{StaticResource IconMagnifyingGlassPlus}" Foreground="{DynamicResource IconForeground}" Width="15" Height="15" />
+            </Button>
+          </StackPanel>
+          <!-- Left: status text -->
+          <TextBlock Text="{Binding StatusText}" FontSize="11" Opacity="0.6"
+                     VerticalAlignment="Center" />
+        </DockPanel>
+      </Border>
+
+      <!-- ═══ PDF viewer ═══ -->
+      <ScrollViewer x:Name="PdfScrollViewer"
+                    HorizontalScrollBarVisibility="Auto"
+                    VerticalScrollBarVisibility="Auto"
+                    Background="{DynamicResource SystemControlPageBackgroundChromeMediumLowBrush}">
+        <LayoutTransformControl x:Name="ZoomTransform">
+          <ItemsControl ItemsSource="{Binding Pages}" Margin="0,16">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <StackPanel Orientation="Vertical" Spacing="0" HorizontalAlignment="Center" />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:PageItem">
+                <StackPanel>
+                  <!-- Insert-before (first page only) -->
+                  <Button Classes="insert-btn"
+                          IsVisible="{Binding IsFirst}"
+                          Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertPagesBeforeCommand}"
+                          CommandParameter="{Binding}"
+                          ToolTip.Tip="Insert pages before">
+                    <PathIcon Data="{StaticResource IconPlusCircle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
+                  </Button>
+
+                  <!-- Page with reorder arrows -->
+                  <Panel Margin="0,6">
+                    <Border BoxShadow="0 1 6 0 #30000000" Background="White">
+                      <views:PageCanvas
+                          PageBitmap="{Binding Bitmap}"
+                          PageIndex="{Binding Index}"
+                          PageWidthPt="{Binding WidthPt}"
+                          PageHeightPt="{Binding HeightPt}"
+                          Annotations="{Binding Annotations}"
+                          PlacementCursor="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).PlacementCursor}" />
+                    </Border>
+
+                    <!-- Reorder arrows (top-left overlay) -->
+                    <StackPanel Orientation="Vertical" Spacing="2"
+                                HorizontalAlignment="Left" VerticalAlignment="Top"
+                                Margin="4,4,0,0">
+                      <Button Classes="reorder-btn"
+                              IsVisible="{Binding !IsFirst}"
+                              Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).MovePageUpCommand}"
+                              CommandParameter="{Binding}"
+                              ToolTip.Tip="Move page up">
+                        <PathIcon Data="{StaticResource IconCaretUp}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
+                      </Button>
+                      <Button Classes="reorder-btn"
+                              IsVisible="{Binding !IsLast}"
+                              Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).MovePageDownCommand}"
+                              CommandParameter="{Binding}"
+                              ToolTip.Tip="Move page down">
+                        <PathIcon Data="{StaticResource IconCaretDown}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
+                      </Button>
+                    </StackPanel>
+                  </Panel>
+
+                  <!-- Insert-after (every page) -->
+                  <Button Classes="insert-btn"
+                          Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertPagesAfterCommand}"
+                          CommandParameter="{Binding}"
+                          ToolTip.Tip="Insert pages after">
+                    <PathIcon Data="{StaticResource IconPlusCircle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
+                  </Button>
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </LayoutTransformControl>
+      </ScrollViewer>
+
+    </DockPanel>
+
+    <!-- ═══ Inline text editor (positioned overlay) ═══ -->
+    <Border x:Name="TextEditorOverlay" IsVisible="False"
+            HorizontalAlignment="Left" VerticalAlignment="Top"
+            Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
+            BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+            BorderThickness="1" CornerRadius="6" Padding="8,6"
+            BoxShadow="0 4 12 0 #40000000">
+      <StackPanel Spacing="6">
+        <TextBox x:Name="InlineTextBox" Width="200" FontSize="13"
+                 PlaceholderText="Type text..." />
+        <ComboBox x:Name="InlineFontCombo" Width="200" FontSize="12"
+                  ItemsSource="{x:Static vm:MainViewModel.AvailableFonts}" />
+      </StackPanel>
+    </Border>
+  </Panel>
+</Window>
