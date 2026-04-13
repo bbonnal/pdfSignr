@@ -52,6 +52,8 @@ public partial class MainViewModel : ObservableObject
     public Cursor? PlacementCursor => CurrentTool is "Text" or "Signature"
         ? new Cursor(StandardCursorType.DragMove) : null;
 
+    public event Action? PdfLoaded;
+
     public MainViewModel(Window window)
     {
         _window = window;
@@ -120,7 +122,7 @@ public partial class MainViewModel : ObservableObject
         LoadPdf(path);
     }
 
-    private void LoadPdf(string path)
+    public void LoadPdf(string path)
     {
         foreach (var page in Pages)
         {
@@ -150,6 +152,7 @@ public partial class MainViewModel : ObservableObject
         RenumberPages();
         _baseStatus = $"{Path.GetFileName(path)} \u2014 {pageCount} page{(pageCount != 1 ? "s" : "")}";
         UpdateStatusText();
+        PdfLoaded?.Invoke();
     }
 
     [RelayCommand(CanExecute = nameof(CanSave))]
@@ -302,6 +305,11 @@ public partial class MainViewModel : ObservableObject
         var path = files.FirstOrDefault()?.TryGetLocalPath();
         if (path == null) return;
 
+        InsertPagesFromFile(path, insertIndex);
+    }
+
+    public void InsertPagesFromFile(string path, int insertIndex)
+    {
         var pdfBytes = File.ReadAllBytes(path);
         var pageCount = PdfRenderService.GetPageCount(pdfBytes);
 

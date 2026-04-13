@@ -5,6 +5,7 @@ using Avalonia.Controls.Presenters;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using pdfSignr.Models;
@@ -31,12 +32,37 @@ public partial class MainWindow : Window
         AddHandler(PageCanvas.DeleteRequestedEvent, OnDeleteRequested);
         // Tunnel so we get the event before ScrollViewer consumes it
         PdfScrollViewer.AddHandler(PointerWheelChangedEvent, OnScrollWheel, RoutingStrategies.Tunnel);
+
+        // Drag-and-drop for PDF files
+        PdfScrollViewer.AddHandler(DragDrop.DragOverEvent, OnDragOver);
+        PdfScrollViewer.AddHandler(DragDrop.DropEvent, OnDrop);
+    }
+
+    protected override void OnOpened(EventArgs e)
+    {
+        base.OnOpened(e);
+
+        // Size window to full vertical extent of the current screen
+        var screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
+        if (screen != null)
+        {
+            var scaling = screen.Scaling;
+            var workArea = screen.WorkingArea;
+            double dipHeight = workArea.Height / scaling;
+            double dipWidth = Math.Max(600, workArea.Width / scaling * 0.6);
+            Height = dipHeight;
+            Width = dipWidth;
+            Position = new PixelPoint(
+                workArea.X + (int)((workArea.Width - dipWidth * scaling) / 2),
+                workArea.Y);
+        }
     }
 
     protected override void OnLoaded(RoutedEventArgs e)
     {
         base.OnLoaded(e);
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
+        ViewModel.PdfLoaded += OnPdfLoaded;
     }
 
     // ═══ ViewModel tracking ═══
@@ -317,6 +343,66 @@ public partial class MainWindow : Window
             }
         }
         return null;
+    }
+
+    // ═══ Drag-and-drop ═══
+
+    private void OnDragOver(object? sender, DragEventArgs e)
+    {
+        e.DragEffects = DragDropEffects.None;
+        var files = e.DataTransfer.TryGetFiles();
+        if (files?.Any(f => f.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) == true)
+            e.DragEffects = DragDropEffects.Copy;
+    }
+
+    private void OnDrop(object? sender, DragEventArgs e)
+    {
+        var files = e.DataTransfer.TryGetFiles();
+        var pdfFile = files?.FirstOrDefault(f => f.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase));
+        var path = pdfFile?.TryGetLocalPath();
+        if (path == null) return;
+
+        if (ViewModel.Pages.Count == 0)
+        {
+            ViewModel.LoadPdf(path);
+        }
+        else
+        {
+            int insertIndex = GetInsertionIndex(e);
+            ViewModel.InsertPagesFromFile(path, insertIndex);
+        }
+    }
+
+    private int GetInsertionIndex(DragEventArgs e)
+    {
+        if (ViewModel.Pages.Count == 0) return 0;
+
+        var dropPos = e.GetPosition(PdfScrollViewer);
+        var itemsControl = (ItemsControl)ZoomTransform.Child!;
+
+        for (int i = 0; i < ViewModel.Pages.Count; i++)
+        {
+            var container = itemsControl.ContainerFromIndex(i);
+            if (container == null) continue;
+
+            // Translate container midpoint to ScrollViewer coordinates
+            var mid = new Point(0, container.Bounds.Height / 2);
+            var inScrollViewer = container.TranslatePoint(mid, PdfScrollViewer);
+            if (inScrollViewer == null) continue;
+
+            if (dropPos.Y < inScrollViewer.Value.Y)
+                return i;
+        }
+
+        return ViewModel.Pages.Count;
+    }
+
+    // ═══ Fit-to-width on load ═══
+
+    private void OnPdfLoaded()
+    {
+        // Delay until layout has completed so FitToWidth can measure page widths
+        Dispatcher.UIThread.Post(FitToWidth, DispatcherPriority.Background);
     }
 
     // ═══ Keyboard ═══

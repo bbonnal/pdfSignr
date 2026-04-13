@@ -6,7 +6,8 @@
         x:DataType="vm:MainViewModel"
         Title="pdfSignr"
         Icon="avares://pdfSignr/Assets/signature_icon.png"
-        Width="900" Height="700">
+        Width="900" Height="700"
+        WindowStartupLocation="CenterScreen">
 
   <Panel>
     <DockPanel>
@@ -105,6 +106,7 @@
       <ScrollViewer x:Name="PdfScrollViewer"
                     HorizontalScrollBarVisibility="Auto"
                     VerticalScrollBarVisibility="Auto"
+                    DragDrop.AllowDrop="True"
                     Background="{DynamicResource SystemControlPageBackgroundChromeMediumLowBrush}">
         <LayoutTransformControl x:Name="ZoomTransform">
           <ItemsControl ItemsSource="{Binding Pages}" Margin="0,16">
