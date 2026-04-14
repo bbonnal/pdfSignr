@@ -22,6 +22,17 @@ public class FontResolver : IFontResolver
         _ => "LiberationSans"
     };
 
+    private static readonly Dictionary<string, string> AvaloniaFontUris = new()
+    {
+        ["Helvetica"] = "avares://pdfSignr/Assets/Fonts/LiberationSans-Regular.ttf#Liberation Sans",
+        ["Times-Roman"] = "avares://pdfSignr/Assets/Fonts/LiberationSerif-Regular.ttf#Liberation Serif",
+        ["Courier"] = "avares://pdfSignr/Assets/Fonts/LiberationMono-Regular.ttf#Liberation Mono",
+    };
+
+    /// <summary>Returns the Avalonia font URI for a PDF font name.</summary>
+    public static string GetAvaloniaFontUri(string pdfFont)
+        => AvaloniaFontUris.GetValueOrDefault(pdfFont, AvaloniaFontUris["Helvetica"]);
+
     private static readonly ConcurrentDictionary<string, byte[]> FontCache = new();
 
     private static readonly Dictionary<string, string> FontResourceMap = new(StringComparer.OrdinalIgnoreCase)

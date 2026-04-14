@@ -24,8 +24,11 @@ public partial class MainWindow : Window
     private MainViewModel ViewModel => (MainViewModel)DataContext!;
     private TextAnnotation? _editingText;
     private double _zoom = 1.0;
-    private int _renderedDpi = MainViewModel.RenderDpi;
+    private double _screenScaling = 1.0;
+    private int _targetDpi = MainViewModel.RenderDpi;
+    private readonly Dictionary<int, int> _pageDpi = new(); // page index → DPI last rendered at
     private DispatcherTimer? _rerenderTimer;
+    private DispatcherTimer? _scrollTimer;
     private CancellationTokenSource? _rerenderCts;
 
     public MainWindow()
@@ -38,11 +41,14 @@ public partial class MainWindow : Window
         // Tunnel so we get the event before ScrollViewer consumes it
         PdfScrollViewer.AddHandler(PointerWheelChangedEvent, OnScrollWheel, RoutingStrategies.Tunnel);
 
-        // Drag-and-drop for PDF files
-        PdfScrollViewer.AddHandler(DragDrop.DragOverEvent, OnDragOver);
-        PdfScrollViewer.AddHandler(DragDrop.DragEnterEvent, OnDragEnter);
-        PdfScrollViewer.AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
-        PdfScrollViewer.AddHandler(DragDrop.DropEvent, OnDrop);
+        // Re-render newly visible pages after scrolling stops
+        PdfScrollViewer.ScrollChanged += OnScrollChanged;
+
+        // Drag-and-drop for PDF files — accept drops anywhere in the window
+        AddHandler(DragDrop.DragOverEvent, OnDragOver);
+        AddHandler(DragDrop.DragEnterEvent, OnDragEnter);
+        AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
+        AddHandler(DragDrop.DropEvent, OnDrop);
     }
 
     protected override void OnOpened(EventArgs e)
@@ -54,6 +60,7 @@ public partial class MainWindow : Window
         if (screen != null)
         {
             var scaling = screen.Scaling;
+            _screenScaling = scaling;
             var workArea = screen.WorkingArea;
 
             // Account for window frame decorations (title bar + borders)
@@ -76,6 +83,10 @@ public partial class MainWindow : Window
         base.OnLoaded(e);
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         ViewModel.PdfLoaded += OnPdfLoaded;
+
+        // Warm up the StorageProvider so the first file-open dialog is fast.
+        // On Linux/WSL this forces the D-Bus portal connection to initialize in the background.
+        _ = StorageProvider.TryGetWellKnownFolderAsync(WellKnownFolder.Documents);
     }
 
     protected override void OnClosed(EventArgs e)
@@ -84,6 +95,8 @@ public partial class MainWindow : Window
         ViewModel.PdfLoaded -= OnPdfLoaded;
         _rerenderTimer?.Stop();
         _rerenderTimer = null;
+        _scrollTimer?.Stop();
+        _scrollTimer = null;
         _rerenderCts?.Cancel();
         _rerenderCts?.Dispose();
         _rerenderCts = null;
@@ -130,6 +143,8 @@ public partial class MainWindow : Window
         }
 
         ZoomTransform.LayoutTransform = new ScaleTransform(_zoom, _zoom);
+        ViewModel.ButtonScale = 1.0 / _zoom;
+        ViewModel.InsertGapHeight = Math.Ceiling(28.0 / _zoom);
         ViewModel.ZoomPercent = (int)Math.Round(_zoom * 100);
         ViewModel.UpdateStatusText();
 
@@ -148,6 +163,9 @@ public partial class MainWindow : Window
         ScheduleRerender();
     }
 
+    // Fixed arrow column width in layout units (scales with zoom like the page)
+    private const double ArrowColumnLayoutWidth = 34;
+
     public void FitToWidth()
     {
         if (ViewModel.Pages.Count == 0) return;
@@ -155,8 +173,10 @@ public partial class MainWindow : Window
         double available = PdfScrollViewer.Bounds.Width - 40;
         if (available <= 0) return;
 
-        double pageScreenWidth = ViewModel.Pages[0].WidthPt * (MainViewModel.RenderDpi / 72.0);
-        if (pageScreenWidth <= 0) return;
+        // Total layout width = page + both arrow columns; all scale together with zoom
+        double pageScreenWidth = ViewModel.Pages[0].WidthPt * MainViewModel.DpiScale;
+        double totalLayoutWidth = pageScreenWidth + 2 * ArrowColumnLayoutWidth;
+        if (totalLayoutWidth <= 0) return;
 
         // Preserve relative vertical position through the zoom change
         double oldExtentH = PdfScrollViewer.Extent.Height;
@@ -167,28 +187,28 @@ public partial class MainWindow : Window
         var viewportCenter = new Point(
             PdfScrollViewer.Viewport.Width / 2,
             PdfScrollViewer.Viewport.Height / 2);
-        ApplyZoom(Math.Clamp(available / pageScreenWidth, MinZoom, MaxZoom), viewportCenter);
+        ApplyZoom(Math.Clamp(available / totalLayoutWidth, MinZoom, MaxZoom), viewportCenter);
     }
 
     // ═══ Adaptive DPI re-render ═══
 
     private void ScheduleRerender()
     {
-        int targetDpi = QuantizeDpi((int)(MainViewModel.RenderDpi * _zoom));
-        if (targetDpi == _renderedDpi) return;
+        int dpi = QuantizeDpi((int)(MainViewModel.RenderDpi * _zoom * _screenScaling));
+        if (dpi == _targetDpi) return;
+        _targetDpi = dpi;
 
-        // Cancel any in-flight render and restart the debounce timer
+        // Cancel any in-flight render — disposal happens in RerenderVisibleAsync
         _rerenderCts?.Cancel();
-        _rerenderCts?.Dispose();
-        _rerenderCts = null;
 
+        // Restart the debounce timer; render fires only after zooming stops
         if (_rerenderTimer == null)
         {
-            _rerenderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+            _rerenderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
             _rerenderTimer.Tick += (_, _) =>
             {
                 _rerenderTimer.Stop();
-                _ = RerenderPagesAsync();
+                _ = RerenderVisibleAsync();
             };
         }
         else
@@ -198,38 +218,87 @@ public partial class MainWindow : Window
         _rerenderTimer.Start();
     }
 
+    private void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
+    {
+        // After scrolling stops, re-render any newly visible pages that are stale
+        if (_scrollTimer == null)
+        {
+            _scrollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+            _scrollTimer.Tick += (_, _) =>
+            {
+                _scrollTimer.Stop();
+                _ = RerenderVisibleAsync();
+            };
+        }
+        else
+        {
+            _scrollTimer.Stop();
+        }
+        _scrollTimer.Start();
+    }
+
     private static int QuantizeDpi(int dpi)
     {
+        // Snap to fixed steps to reduce re-render frequency,
+        // but scale without a hard cap so vector PDFs stay sharp at any zoom.
         if (dpi <= 100) return 96;
         if (dpi <= 150) return 150;
         if (dpi <= 225) return 200;
         if (dpi <= 350) return 300;
-        return 400;
+        if (dpi <= 500) return 400;
+        if (dpi <= 700) return 600;
+        if (dpi <= 1000) return 800;
+        return 1200;
     }
 
-    private async Task RerenderPagesAsync()
+    private HashSet<int> GetVisiblePageIndices()
     {
-        int targetDpi = QuantizeDpi((int)(MainViewModel.RenderDpi * _zoom));
-        if (targetDpi == _renderedDpi) return;
-        _renderedDpi = targetDpi;
+        var visible = new HashSet<int>();
+        if (ViewModel.Pages.Count == 0) return visible;
 
+        var itemsControl = (ItemsControl)ZoomTransform.Child!;
+        double viewportH = PdfScrollViewer.Viewport.Height;
+
+        for (int i = 0; i < ViewModel.Pages.Count; i++)
+        {
+            var container = itemsControl.ContainerFromIndex(i);
+            if (container == null) continue;
+
+            // TranslatePoint gives viewport-relative coordinates
+            // (scroll offset and zoom already applied)
+            var top = container.TranslatePoint(new Point(0, 0), PdfScrollViewer);
+            var bottom = container.TranslatePoint(new Point(0, container.Bounds.Height), PdfScrollViewer);
+            if (top == null || bottom == null) continue;
+
+            if (bottom.Value.Y >= 0 && top.Value.Y <= viewportH)
+                visible.Add(i);
+        }
+        return visible;
+    }
+
+    private async Task RerenderVisibleAsync()
+    {
         _rerenderCts?.Cancel();
         _rerenderCts?.Dispose();
         var cts = new CancellationTokenSource();
         _rerenderCts = cts;
 
-        // Snapshot page sources so we can render off-thread
-        var snapshot = ViewModel.Pages
+        var visible = GetVisiblePageIndices();
+        int dpi = _targetDpi;
+
+        // Re-render pages that are visible AND not already at the target DPI
+        var pagesToRender = ViewModel.Pages
+            .Where(p => visible.Contains(p.Index)
+                     && (!_pageDpi.TryGetValue(p.Index, out var cur) || cur != dpi))
             .Select(p => (Page: p, p.Source.PdfBytes, p.Source.SourcePageIndex))
             .ToList();
 
-        foreach (var (page, pdfBytes, srcIdx) in snapshot)
+        foreach (var (page, pdfBytes, srcIdx) in pagesToRender)
         {
             if (cts.Token.IsCancellationRequested) return;
 
-            // Render single page on background thread
             var bitmap = await Task.Run(
-                () => PdfRenderService.RenderPage(pdfBytes, srcIdx, targetDpi),
+                () => PdfRenderService.RenderPage(pdfBytes, srcIdx, dpi),
                 cts.Token);
 
             if (cts.Token.IsCancellationRequested)
@@ -240,6 +309,46 @@ public partial class MainWindow : Window
 
             var old = page.Bitmap;
             page.Bitmap = bitmap;
+            old?.Dispose();
+            _pageDpi[page.Index] = dpi;
+        }
+
+        // Re-render annotation bitmaps on visible pages at the target DPI
+        var annotations = ViewModel.Pages
+            .Where(p => visible.Contains(p.Index))
+            .SelectMany(p => p.Annotations)
+            .OfType<SvgAnnotation>()
+            .Where(a => a.RenderedBitmap != null && a.RenderedDpi != dpi)
+            .ToList();
+
+        foreach (var ann in annotations)
+        {
+            if (cts.Token.IsCancellationRequested) return;
+
+            Avalonia.Media.Imaging.Bitmap bitmap;
+            if (ann.IsRaster)
+            {
+                bitmap = await Task.Run(
+                    () => SvgRenderService.ResampleForDisplay(
+                        ann.SvgFilePath, ann.WidthPt, ann.HeightPt, dpi),
+                    cts.Token);
+            }
+            else
+            {
+                bitmap = await Task.Run(
+                    () => SvgRenderService.RenderForDisplay(ann.SvgFilePath, ann.Scale, dpi),
+                    cts.Token);
+            }
+
+            if (cts.Token.IsCancellationRequested)
+            {
+                bitmap.Dispose();
+                return;
+            }
+
+            var old = ann.RenderedBitmap;
+            ann.RenderedBitmap = bitmap;
+            ann.RenderedDpi = dpi;
             old?.Dispose();
         }
     }
@@ -381,29 +490,36 @@ public partial class MainWindow : Window
         return files?.Any(f => f.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) == true;
     }
 
+    private int _dragEnterCount;
+
     private void OnDragEnter(object? sender, DragEventArgs e)
     {
         if (HasPdfFiles(e))
+        {
+            _dragEnterCount++;
             ViewModel.IsDraggingFile = true;
+        }
     }
 
     private void OnDragOver(object? sender, DragEventArgs e)
     {
         e.DragEffects = DragDropEffects.None;
         if (HasPdfFiles(e))
-        {
             e.DragEffects = DragDropEffects.Copy;
-            ViewModel.IsDraggingFile = true;
-        }
     }
 
     private void OnDragLeave(object? sender, DragEventArgs e)
     {
-        ViewModel.IsDraggingFile = false;
+        if (--_dragEnterCount <= 0)
+        {
+            _dragEnterCount = 0;
+            ViewModel.IsDraggingFile = false;
+        }
     }
 
     private void OnDrop(object? sender, DragEventArgs e)
     {
+        _dragEnterCount = 0;
         ViewModel.IsDraggingFile = false;
 
         var files = e.DataTransfer.TryGetFiles();
@@ -450,6 +566,12 @@ public partial class MainWindow : Window
 
     private void OnPdfLoaded()
     {
+        // Mark all pages as rendered at the base DPI (initial load renders at RenderDpi)
+        _pageDpi.Clear();
+        _targetDpi = MainViewModel.RenderDpi;
+        foreach (var page in ViewModel.Pages)
+            _pageDpi[page.Index] = MainViewModel.RenderDpi;
+
         // Delay until layout has completed so FitToWidth can measure page widths
         Dispatcher.UIThread.Post(FitToWidth, DispatcherPriority.Background);
     }
@@ -483,7 +605,7 @@ public partial class MainWindow : Window
         else if (e.Key == Key.Escape)
         {
             HideTextEditor();
-            ViewModel.CurrentTool = "Select";
+            ViewModel.CurrentTool = ToolMode.Select;
             ViewModel.SelectAnnotation(null);
             e.Handled = true;
         }

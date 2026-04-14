@@ -2,6 +2,7 @@ using System.Globalization;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
+using pdfSignr.Services;
 
 namespace pdfSignr.Models;
 
@@ -50,7 +51,7 @@ public partial class TextAnnotation : Annotation
         if (_heightPt <= 0) return 12;
         // Measure text at a reference size to find the ratio
         const double refSize = 72.0;
-        const double dpiScale = 150.0 / 72.0; // must match MainViewModel.DpiScale
+        double dpiScale = PdfConstants.DpiScale;
         if (!TypefaceCache.TryGetValue(FontFamily, out var typeface))
         {
             typeface = new Typeface(MapFontForMeasure(FontFamily));
@@ -63,15 +64,11 @@ public partial class TextAnnotation : Annotation
         return refSize * _heightPt / measuredHeightPt;
     }
 
-    internal static FontFamily MapFontForMeasure(string pdfFont) => pdfFont switch
-    {
-        "Helvetica" => new FontFamily("avares://pdfSignr/Assets/Fonts/LiberationSans-Regular.ttf#Liberation Sans"),
-        "Times-Roman" => new FontFamily("avares://pdfSignr/Assets/Fonts/LiberationSerif-Regular.ttf#Liberation Serif"),
-        "Courier" => new FontFamily("avares://pdfSignr/Assets/Fonts/LiberationMono-Regular.ttf#Liberation Mono"),
-        _ => new FontFamily("avares://pdfSignr/Assets/Fonts/LiberationSans-Regular.ttf#Liberation Sans"),
-    };
+    internal static FontFamily MapFontForMeasure(string pdfFont)
+        => new(FontResolver.GetAvaloniaFontUri(pdfFont));
 }
 
+/// <summary>Annotation backed by an external file (SVG vector or raster PNG/JPG).</summary>
 public partial class SvgAnnotation : Annotation
 {
     [ObservableProperty] private string _svgFilePath = "";
@@ -81,7 +78,9 @@ public partial class SvgAnnotation : Annotation
     private double _svgWidthPt;
     private double _svgHeightPt;
 
+    public bool IsRaster { get; init; }
     public Bitmap? RenderedBitmap { get; set; }
+    public int RenderedDpi { get; set; }
 
     public override double WidthPt
     {

@@ -39,12 +39,21 @@ public class PageCanvas : Control
     private const double RotateDistance = 28;
     private const double RotateRadius = 6;
     private const double MinSizePt = 8;
+    private const double DeleteSize = 7;
+    private const double DeleteOffset = 14;
+    private const double HitBodyInflate = 4;
 
     // Cached cursors to avoid allocations on every mouse move
     private static readonly Cursor CursorHand = new(StandardCursorType.Hand);
     private static readonly Cursor CursorTopLeft = new(StandardCursorType.TopLeftCorner);
     private static readonly Cursor CursorTopRight = new(StandardCursorType.TopRightCorner);
     private static readonly Cursor CursorDragMove = new(StandardCursorType.DragMove);
+
+    // Cached pens to avoid allocations on every render frame
+    private static readonly Pen SelectionDashPen = new(Brushes.DodgerBlue, 1.5, DashStyle.Dash);
+    private static readonly Pen HandlePen = new(Brushes.DodgerBlue, 1.5);
+    private static readonly Pen DeleteCirclePen = new(Brushes.IndianRed, 1.5);
+    private static readonly Pen DeleteXPen = new(Brushes.IndianRed, 2);
 
     // Interaction state
     private enum State { Idle, Dragging, Resizing, Rotating }
@@ -188,37 +197,29 @@ public class PageCanvas : Control
         }
     }
 
-    private const double DeleteSize = 7;
-    private const double DeleteOffset = 14; // distance from top-right corner
-
     private static void DrawChrome(DrawingContext ctx, Rect rect)
     {
-        var pen = new Pen(Brushes.DodgerBlue, 1.5, DashStyle.Dash);
-        ctx.DrawRectangle(null, pen, rect.Inflate(2));
-
-        var hFill = Brushes.White;
-        var hPen = new Pen(Brushes.DodgerBlue, 1.5);
+        ctx.DrawRectangle(null, SelectionDashPen, rect.Inflate(2));
 
         // Corner handles
-        DrawCircle(ctx, rect.TopLeft, HandleRadius, hFill, hPen);
-        DrawCircle(ctx, rect.TopRight, HandleRadius, hFill, hPen);
-        DrawCircle(ctx, rect.BottomLeft, HandleRadius, hFill, hPen);
-        DrawCircle(ctx, rect.BottomRight, HandleRadius, hFill, hPen);
+        DrawCircle(ctx, rect.TopLeft, HandleRadius, Brushes.White, HandlePen);
+        DrawCircle(ctx, rect.TopRight, HandleRadius, Brushes.White, HandlePen);
+        DrawCircle(ctx, rect.BottomLeft, HandleRadius, Brushes.White, HandlePen);
+        DrawCircle(ctx, rect.BottomRight, HandleRadius, Brushes.White, HandlePen);
 
         // Rotation handle
         var topMid = new Point(rect.Center.X, rect.Top);
         var rotPos = new Point(rect.Center.X, rect.Top - RotateDistance);
-        ctx.DrawLine(hPen, topMid, rotPos);
-        DrawCircle(ctx, rotPos, RotateRadius, Brushes.LightGreen, hPen);
+        ctx.DrawLine(HandlePen, topMid, rotPos);
+        DrawCircle(ctx, rotPos, RotateRadius, Brushes.LightGreen, HandlePen);
 
         // Delete handle (red circle with X, top-right outside corner)
         var delPos = new Point(rect.Right + DeleteOffset, rect.Top - DeleteOffset);
-        DrawCircle(ctx, delPos, HandleRadius + 2, Brushes.White, new Pen(Brushes.IndianRed, 1.5));
-        var xPen = new Pen(Brushes.IndianRed, 2);
-        ctx.DrawLine(xPen,
+        DrawCircle(ctx, delPos, HandleRadius + 2, Brushes.White, DeleteCirclePen);
+        ctx.DrawLine(DeleteXPen,
             new Point(delPos.X - DeleteSize / 2, delPos.Y - DeleteSize / 2),
             new Point(delPos.X + DeleteSize / 2, delPos.Y + DeleteSize / 2));
-        ctx.DrawLine(xPen,
+        ctx.DrawLine(DeleteXPen,
             new Point(delPos.X + DeleteSize / 2, delPos.Y - DeleteSize / 2),
             new Point(delPos.X - DeleteSize / 2, delPos.Y + DeleteSize / 2));
     }
@@ -313,11 +314,19 @@ public class PageCanvas : Control
 
         if (_state == State.Resizing && _target is SvgAnnotation svg)
         {
-            // Re-render bitmap at final size
             svg.Scale = svg.OriginalWidthPt > 0 ? svg.WidthPt / svg.OriginalWidthPt : 1;
             svg.RenderedBitmap?.Dispose();
-            svg.RenderedBitmap = Services.SvgRenderService.RenderForDisplay(
-                svg.SvgFilePath, svg.Scale, MainViewModel.RenderDpi);
+            if (svg.IsRaster)
+            {
+                svg.RenderedBitmap = Services.SvgRenderService.ResampleForDisplay(
+                    svg.SvgFilePath, svg.WidthPt, svg.HeightPt, MainViewModel.RenderDpi);
+            }
+            else
+            {
+                svg.RenderedBitmap = Services.SvgRenderService.RenderForDisplay(
+                    svg.SvgFilePath, svg.Scale, MainViewModel.RenderDpi);
+            }
+            svg.RenderedDpi = MainViewModel.RenderDpi;
         }
 
         _state = State.Idle;
@@ -450,9 +459,9 @@ public class PageCanvas : Control
         if (ann.Rotation != 0)
         {
             var local = RotatePoint(pos, rect.Center, -ann.Rotation * Math.PI / 180.0);
-            return rect.Inflate(4).Contains(local);
+            return rect.Inflate(HitBodyInflate).Contains(local);
         }
-        return rect.Inflate(4).Contains(pos);
+        return rect.Inflate(HitBodyInflate).Contains(pos);
     }
 
     private void UpdateIdleCursor(Point pos)

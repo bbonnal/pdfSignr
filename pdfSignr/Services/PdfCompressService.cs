@@ -17,13 +17,25 @@ public record CompressResult(long OriginalSize, long CompressedSize, int PageCou
 [SuppressMessage("Interoperability", "CA1416:Validate platform compatibility")]
 public static class PdfCompressService
 {
-    private static (int MaxDimension, int JpegQuality) GetPresetSettings(CompressionPreset preset) => preset switch
+    private record PresetConfig(int ResampleMaxDim, int ResampleQuality, int RasterDpi, int RasterQuality);
+
+    private static PresetConfig GetPreset(CompressionPreset preset) => preset switch
     {
-        CompressionPreset.Screen => (1024, 50),
-        CompressionPreset.Ebook => (1600, 65),
-        CompressionPreset.Print => (2400, 80),
-        _ => (1600, 65)
+        CompressionPreset.Screen => new(1024, 50, 72, 50),
+        CompressionPreset.Ebook  => new(1600, 65, 150, 70),
+        CompressionPreset.Print  => new(2400, 80, 300, 90),
+        _                        => new(1600, 65, 150, 70),
     };
+
+    private static long ComputeOriginalSize(IReadOnlyList<PageSource> pageSources)
+    {
+        long total = 0;
+        var seen = new HashSet<int>();
+        foreach (var ps in pageSources)
+            if (seen.Add(RuntimeHelpers.GetHashCode(ps.PdfBytes)))
+                total += ps.PdfBytes.Length;
+        return total;
+    }
 
     public static async Task<CompressResult> CompressAsync(
         IReadOnlyList<PageSource> pageSources,
@@ -32,25 +44,15 @@ public static class PdfCompressService
         IProgress<int>? progress = null,
         CancellationToken ct = default)
     {
-        var (maxDim, jpegQuality) = GetPresetSettings(preset);
+        var config = GetPreset(preset);
+        int maxDim = config.ResampleMaxDim, jpegQuality = config.ResampleQuality;
+        long originalSize = ComputeOriginalSize(pageSources);
 
-        // Build the output PDF from page sources (same as save pipeline)
-        // then walk its objects and resample embedded images
         var result = await Task.Run(() =>
         {
-            // Import all pages into a new document
             var sourceDocCache = new Dictionary<int, PdfDocument>();
             var outputDoc = new PdfDocument();
             outputDoc.Options.CompressContentStreams = true;
-
-            long originalSize = 0;
-            var seenBytes = new HashSet<int>();
-            foreach (var ps in pageSources)
-            {
-                var id = RuntimeHelpers.GetHashCode(ps.PdfBytes);
-                if (seenBytes.Add(id))
-                    originalSize += ps.PdfBytes.Length;
-            }
 
             try
             {
@@ -238,14 +240,6 @@ public static class PdfCompressService
 
     // ═══ Full-page rasterization (flatten for print) ═══
 
-    private static (int Dpi, int JpegQuality) GetRasterSettings(CompressionPreset preset) => preset switch
-    {
-        CompressionPreset.Screen => (72, 50),
-        CompressionPreset.Ebook => (150, 70),
-        CompressionPreset.Print => (300, 90),
-        _ => (150, 70)
-    };
-
     public static async Task<CompressResult> RasterizeAsync(
         IReadOnlyList<PageSource> pageSources,
         string outputPath,
@@ -253,16 +247,9 @@ public static class PdfCompressService
         IProgress<int>? progress = null,
         CancellationToken ct = default)
     {
-        var (dpi, jpegQuality) = GetRasterSettings(preset);
-
-        var seenBytes = new HashSet<int>();
-        long originalSize = 0;
-        foreach (var ps in pageSources)
-        {
-            var id = RuntimeHelpers.GetHashCode(ps.PdfBytes);
-            if (seenBytes.Add(id))
-                originalSize += ps.PdfBytes.Length;
-        }
+        var config = GetPreset(preset);
+        int dpi = config.RasterDpi, jpegQuality = config.RasterQuality;
+        long originalSize = ComputeOriginalSize(pageSources);
 
         var result = await Task.Run(() =>
         {

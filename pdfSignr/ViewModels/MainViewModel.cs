@@ -12,6 +12,8 @@ using pdfSignr.Services;
 
 namespace pdfSignr.ViewModels;
 
+public enum ToolMode { Select, Text, Signature }
+
 public partial class PageItem : ObservableObject
 {
     [ObservableProperty] private int _index;
@@ -26,8 +28,8 @@ public partial class PageItem : ObservableObject
 
 public partial class MainViewModel : ObservableObject
 {
-    public const int RenderDpi = 150;
-    public const double DpiScale = RenderDpi / 72.0;
+    public const int RenderDpi = PdfConstants.RenderDpi;
+    public const double DpiScale = PdfConstants.DpiScale;
 
     private readonly Window _window;
     private IStorageProvider Storage => _window.StorageProvider;
@@ -35,11 +37,13 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string? _pdfFilePath;
     [ObservableProperty] private ObservableCollection<PageItem> _pages = new();
     [ObservableProperty] private Annotation? _selectedAnnotation;
-    [ObservableProperty] private string _currentTool = "Select";
+    [ObservableProperty] private ToolMode _currentTool = ToolMode.Select;
     private string _baseStatus = "Open a PDF to get started";
     [ObservableProperty] private string _statusText = "Open a PDF to get started";
     [ObservableProperty] private string? _signatureSvgPath;
     [ObservableProperty] private bool _isDraggingFile;
+    [ObservableProperty] private double _buttonScale = 1.0;
+    [ObservableProperty] private double _insertGapHeight = 28;
 
     public bool IsNotDraggingFile => !IsDraggingFile;
     public bool HasNoPages => Pages.Count == 0;
@@ -55,11 +59,11 @@ public partial class MainViewModel : ObservableObject
     public int ZoomPercent { get; set; } = 100;
 
     // Computed tool-active properties for Ribbon ToggleButton binding
-    public bool IsTextToolActive => CurrentTool == "Text";
-    public bool IsSignToolActive => CurrentTool == "Signature";
+    public bool IsTextToolActive => CurrentTool == ToolMode.Text;
+    public bool IsSignToolActive => CurrentTool == ToolMode.Signature;
     public string TextToolTip => IsTextToolActive ? "Click on page to place text" : "Add text";
     public string SignToolTip => IsSignToolActive ? "Click on page to place signature" : "Add signature";
-    public Cursor? PlacementCursor => CurrentTool is "Text" or "Signature"
+    public Cursor? PlacementCursor => CurrentTool is ToolMode.Text or ToolMode.Signature
         ? new Cursor(StandardCursorType.DragMove) : null;
 
     public event Action? PdfLoaded;
@@ -108,7 +112,7 @@ public partial class MainViewModel : ObservableObject
         CompressRasterizeCommand.NotifyCanExecuteChanged();
     }
 
-    partial void OnCurrentToolChanged(string value)
+    partial void OnCurrentToolChanged(ToolMode value)
     {
         OnPropertyChanged(nameof(IsTextToolActive));
         OnPropertyChanged(nameof(IsSignToolActive));
@@ -231,15 +235,15 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void ToggleTextTool()
     {
-        CurrentTool = CurrentTool == "Text" ? "Select" : "Text";
+        CurrentTool = CurrentTool == ToolMode.Text ? ToolMode.Select : ToolMode.Text;
     }
 
     [RelayCommand]
     private async Task ToggleSignTool()
     {
-        if (CurrentTool == "Signature")
+        if (CurrentTool == ToolMode.Signature)
         {
-            CurrentTool = "Select";
+            CurrentTool = ToolMode.Select;
             return;
         }
 
@@ -247,16 +251,16 @@ public partial class MainViewModel : ObservableObject
         {
             var files = await Storage.OpenFilePickerAsync(new FilePickerOpenOptions
             {
-                Title = "Select SVG Signature",
-                FileTypeFilter = [new FilePickerFileType("SVG") { Patterns = ["*.svg"] }]
+                Title = "Select Signature",
+                FileTypeFilter = [new FilePickerFileType("Signature images") { Patterns = ["*.svg", "*.png", "*.jpg", "*.jpeg"] }]
             });
 
-            var svgPath = files.FirstOrDefault()?.TryGetLocalPath();
-            if (svgPath == null) return; // Cancelled — stay in Select mode
-            SignatureSvgPath = svgPath;
+            var path = files.FirstOrDefault()?.TryGetLocalPath();
+            if (path == null) return; // Cancelled — stay in Select mode
+            SignatureSvgPath = path;
         }
 
-        CurrentTool = "Signature";
+        CurrentTool = ToolMode.Signature;
     }
 
     // --- Page reordering ---
@@ -457,7 +461,7 @@ public partial class MainViewModel : ObservableObject
     {
         if (pageIndex < 0 || pageIndex >= Pages.Count) return;
 
-        if (CurrentTool == "Text")
+        if (CurrentTool == ToolMode.Text)
         {
             const double w = 50, h = 18;
             var annotation = new TextAnnotation
@@ -468,25 +472,40 @@ public partial class MainViewModel : ObservableObject
             };
             Pages[pageIndex].Annotations.Add(annotation);
             SelectAnnotation(annotation);
-            CurrentTool = "Select";
+            CurrentTool = ToolMode.Select;
         }
-        else if (CurrentTool == "Signature" && SignatureSvgPath != null)
+        else if (CurrentTool == ToolMode.Signature && SignatureSvgPath != null)
         {
-            var (baseW, baseH) = SvgRenderService.GetSvgSize(SignatureSvgPath);
-            var bitmap = SvgRenderService.RenderForDisplay(SignatureSvgPath, 1.0, RenderDpi);
+            bool isRaster = !SignatureSvgPath.EndsWith(".svg", StringComparison.OrdinalIgnoreCase);
+
+            double baseW, baseH;
+            Avalonia.Media.Imaging.Bitmap bitmap;
+
+            if (isRaster)
+            {
+                (baseW, baseH) = SvgRenderService.GetImageSize(SignatureSvgPath);
+                bitmap = new Avalonia.Media.Imaging.Bitmap(SignatureSvgPath);
+            }
+            else
+            {
+                (baseW, baseH) = SvgRenderService.GetSvgSize(SignatureSvgPath);
+                bitmap = SvgRenderService.RenderForDisplay(SignatureSvgPath, 1.0, RenderDpi);
+            }
 
             var annotation = new SvgAnnotation
             {
                 X = pdfX - baseW / 2, Y = pdfY - baseH / 2, PageIndex = pageIndex,
                 SvgFilePath = SignatureSvgPath,
+                IsRaster = isRaster,
                 Scale = 1.0,
                 OriginalWidthPt = baseW, OriginalHeightPt = baseH,
                 WidthPt = baseW, HeightPt = baseH,
-                RenderedBitmap = bitmap
+                RenderedBitmap = bitmap,
+                RenderedDpi = RenderDpi
             };
             Pages[pageIndex].Annotations.Add(annotation);
             SelectAnnotation(annotation);
-            CurrentTool = "Select";
+            CurrentTool = ToolMode.Select;
         }
         else
         {
