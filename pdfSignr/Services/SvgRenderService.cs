@@ -21,20 +21,41 @@ public static class SvgRenderService
     {
         var (pixelW, pixelH, svg, bounds) = PrepareRender(svgPath, scale, renderDpi);
         using var _ = svg;
-        var picture = svg.Picture!;
 
-        using var surface = SKSurface.Create(new SKImageInfo(pixelW, pixelH, SKColorType.Rgba8888, SKAlphaType.Premul));
+        using var surface = SKSurface.Create(new SKImageInfo(pixelW, pixelH, SKColorType.Bgra8888, SKAlphaType.Premul));
         var canvas = surface.Canvas;
         canvas.Clear(SKColors.Transparent);
         canvas.Scale(pixelW / bounds.Width, pixelH / bounds.Height);
         canvas.Translate(-bounds.Left, -bounds.Top);
-        canvas.DrawPicture(picture);
+        canvas.DrawPicture(svg.Picture!);
 
         using var image = surface.Snapshot();
-        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
-        var bytes = data.ToArray();
-        using var stream = new MemoryStream(bytes);
-        return new Avalonia.Media.Imaging.Bitmap(stream);
+        using var skBitmap = SKBitmap.FromImage(image);
+        return BitmapConvert.ToAvaloniaBitmap(skBitmap);
+    }
+
+    /// <summary>Returns SVG size and rendered bitmap in a single parse (avoids loading the SVG twice).</summary>
+    public static (double WidthPt, double HeightPt, Avalonia.Media.Imaging.Bitmap Bitmap)
+        GetSizeAndRenderForDisplay(string svgPath, double scale, int renderDpi)
+    {
+        var (pixelW, pixelH, svg, bounds) = PrepareRender(svgPath, scale, renderDpi);
+        using var _ = svg;
+
+        double widthPt = bounds.Width * PdfConstants.SvgDpiToPoints * scale;
+        double heightPt = bounds.Height * PdfConstants.SvgDpiToPoints * scale;
+
+        using var surface = SKSurface.Create(new SKImageInfo(pixelW, pixelH, SKColorType.Bgra8888, SKAlphaType.Premul));
+        var canvas = surface.Canvas;
+        canvas.Clear(SKColors.Transparent);
+        canvas.Scale(pixelW / bounds.Width, pixelH / bounds.Height);
+        canvas.Translate(-bounds.Left, -bounds.Top);
+        canvas.DrawPicture(svg.Picture!);
+
+        using var image = surface.Snapshot();
+        using var skBitmap = SKBitmap.FromImage(image);
+        var bitmap = BitmapConvert.ToAvaloniaBitmap(skBitmap);
+
+        return (widthPt, heightPt, bitmap);
     }
 
     public static byte[] RenderToVectorPdf(string svgPath, double scale)
@@ -77,11 +98,7 @@ public static class SvgRenderService
 
         var sampling = new SKSamplingOptions(SKCubicResampler.Mitchell);
         using var resized = original.Resize(new SKSizeI(pixelW, pixelH), sampling);
-        using var image = SKImage.FromBitmap(resized ?? original);
-        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
-        var bytes = data.ToArray();
-        using var stream = new MemoryStream(bytes);
-        return new Avalonia.Media.Imaging.Bitmap(stream);
+        return BitmapConvert.ToAvaloniaBitmap(resized ?? original);
     }
 
     private static (int PixelW, int PixelH, SKSvg Svg, SKRect Bounds) PrepareRender(

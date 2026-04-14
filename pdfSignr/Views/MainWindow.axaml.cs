@@ -258,20 +258,26 @@ public partial class MainWindow : Window
 
         var itemsControl = (ItemsControl)ZoomTransform.Child!;
         double viewportH = PdfScrollViewer.Viewport.Height;
+        bool foundVisible = false;
 
         for (int i = 0; i < ViewModel.Pages.Count; i++)
         {
             var container = itemsControl.ContainerFromIndex(i);
             if (container == null) continue;
 
-            // TranslatePoint gives viewport-relative coordinates
-            // (scroll offset and zoom already applied)
             var top = container.TranslatePoint(new Point(0, 0), PdfScrollViewer);
             var bottom = container.TranslatePoint(new Point(0, container.Bounds.Height), PdfScrollViewer);
             if (top == null || bottom == null) continue;
 
             if (bottom.Value.Y >= 0 && top.Value.Y <= viewportH)
+            {
                 visible.Add(i);
+                foundVisible = true;
+            }
+            else if (foundVisible)
+            {
+                break; // pages are vertical — all remaining are below viewport
+            }
         }
         return visible;
     }

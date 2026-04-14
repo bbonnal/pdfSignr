@@ -1,6 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
 using PDFtoImage;
-using SkiaSharp;
 
 namespace pdfSignr.Services;
 
@@ -25,9 +24,6 @@ public static class PdfRenderService
     public static Avalonia.Media.Imaging.Bitmap RenderPage(byte[] pdfBytes, int pageIndex, int dpi)
     {
         using var skBitmap = Conversion.ToImage(pdfBytes, page: pageIndex, options: new(Dpi: dpi));
-        using var data = skBitmap.Encode(SKEncodedImageFormat.Png, 100);
-        var encoded = data.ToArray();
-        using var stream = new MemoryStream(encoded);
-        return new Avalonia.Media.Imaging.Bitmap(stream);
+        return BitmapConvert.ToAvaloniaBitmap(skBitmap);
     }
 }

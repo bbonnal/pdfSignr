@@ -24,12 +24,17 @@ public partial class TextAnnotation : Annotation
     [ObservableProperty] private string _fontFamily = "Helvetica";
     private double _widthPt = 40;
     private double _heightPt = 18;
+    private double? _cachedFontSize;
 
-    // Font size is derived from bounding box height
-    public double FontSize => ComputeFontSize();
+    // Font size is derived from bounding box height (cached until inputs change)
+    public double FontSize => _cachedFontSize ??= ComputeFontSize();
 
     partial void OnTextChanged(string value) => OnPropertyChanged(nameof(FontSize));
-    partial void OnFontFamilyChanged(string value) => OnPropertyChanged(nameof(FontSize));
+    partial void OnFontFamilyChanged(string value)
+    {
+        _cachedFontSize = null;
+        OnPropertyChanged(nameof(FontSize));
+    }
 
     public override double WidthPt
     {
@@ -40,7 +45,7 @@ public partial class TextAnnotation : Annotation
     public override double HeightPt
     {
         get => _heightPt;
-        set { if (SetProperty(ref _heightPt, value)) OnPropertyChanged(nameof(FontSize)); }
+        set { if (SetProperty(ref _heightPt, value)) { _cachedFontSize = null; OnPropertyChanged(nameof(FontSize)); } }
     }
 
     // Shared cache — also used by PageCanvas.MakeFormattedText

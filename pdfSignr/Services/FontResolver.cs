@@ -33,6 +33,7 @@ public class FontResolver : IFontResolver
     public static string GetAvaloniaFontUri(string pdfFont)
         => AvaloniaFontUris.GetValueOrDefault(pdfFont, AvaloniaFontUris["Helvetica"]);
 
+    private static readonly Assembly ThisAssembly = Assembly.GetExecutingAssembly();
     private static readonly ConcurrentDictionary<string, byte[]> FontCache = new();
 
     private static readonly Dictionary<string, string> FontResourceMap = new(StringComparer.OrdinalIgnoreCase)
@@ -55,8 +56,7 @@ public class FontResolver : IFontResolver
         if (!FontResourceMap.TryGetValue(faceName, out var resourceName))
             return null;
 
-        var assembly = Assembly.GetExecutingAssembly();
-        using var stream = assembly.GetManifestResourceStream(resourceName);
+        using var stream = ThisAssembly.GetManifestResourceStream(resourceName);
         if (stream == null) return null;
 
         using var ms = new MemoryStream();

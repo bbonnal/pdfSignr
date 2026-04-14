@@ -63,8 +63,9 @@ public partial class MainViewModel : ObservableObject
     public bool IsSignToolActive => CurrentTool == ToolMode.Signature;
     public string TextToolTip => IsTextToolActive ? "Click on page to place text" : "Add text";
     public string SignToolTip => IsSignToolActive ? "Click on page to place signature" : "Add signature";
+    private static readonly Cursor DragMoveCursor = new(StandardCursorType.DragMove);
     public Cursor? PlacementCursor => CurrentTool is ToolMode.Text or ToolMode.Signature
-        ? new Cursor(StandardCursorType.DragMove) : null;
+        ? DragMoveCursor : null;
 
     public event Action? PdfLoaded;
 
@@ -488,8 +489,7 @@ public partial class MainViewModel : ObservableObject
             }
             else
             {
-                (baseW, baseH) = SvgRenderService.GetSvgSize(SignatureSvgPath);
-                bitmap = SvgRenderService.RenderForDisplay(SignatureSvgPath, 1.0, RenderDpi);
+                (baseW, baseH, bitmap) = SvgRenderService.GetSizeAndRenderForDisplay(SignatureSvgPath, 1.0, RenderDpi);
             }
 
             var annotation = new SvgAnnotation
