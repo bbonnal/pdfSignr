@@ -38,6 +38,15 @@ public partial class MainViewModel : ObservableObject
     private string _baseStatus = "Open a PDF to get started";
     [ObservableProperty] private string _statusText = "Open a PDF to get started";
     [ObservableProperty] private string? _signatureSvgPath;
+    [ObservableProperty] private bool _isDraggingFile;
+
+    public bool IsNotDraggingFile => !IsDraggingFile;
+    public bool HasNoPages => Pages.Count == 0;
+
+    partial void OnIsDraggingFileChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsNotDraggingFile));
+    }
 
     public static string[] AvailableFonts { get; } = ["Helvetica", "Times-Roman", "Courier"];
 
@@ -65,6 +74,7 @@ public partial class MainViewModel : ObservableObject
         SaveCommand.NotifyCanExecuteChanged();
         CompressResampleCommand.NotifyCanExecuteChanged();
         CompressRasterizeCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(HasNoPages));
     }
 
     partial void OnSelectedAnnotationChanged(Annotation? oldValue, Annotation? newValue)

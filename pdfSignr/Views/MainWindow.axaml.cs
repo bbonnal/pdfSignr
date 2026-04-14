@@ -35,6 +35,8 @@ public partial class MainWindow : Window
 
         // Drag-and-drop for PDF files
         PdfScrollViewer.AddHandler(DragDrop.DragOverEvent, OnDragOver);
+        PdfScrollViewer.AddHandler(DragDrop.DragEnterEvent, OnDragEnter);
+        PdfScrollViewer.AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
         PdfScrollViewer.AddHandler(DragDrop.DropEvent, OnDrop);
     }
 
@@ -48,7 +50,13 @@ public partial class MainWindow : Window
         {
             var scaling = screen.Scaling;
             var workArea = screen.WorkingArea;
-            double dipHeight = workArea.Height / scaling;
+
+            // Account for window frame decorations (title bar + borders)
+            double frameOverhead = FrameSize is { } frame
+                ? frame.Height - ClientSize.Height
+                : 32; // safe fallback for typical title bar
+
+            double dipHeight = workArea.Height / scaling - frameOverhead;
             double dipWidth = Math.Max(600, workArea.Width / scaling * 0.6);
             Height = dipHeight;
             Width = dipWidth;
@@ -347,16 +355,37 @@ public partial class MainWindow : Window
 
     // ═══ Drag-and-drop ═══
 
+    private static bool HasPdfFiles(DragEventArgs e)
+    {
+        var files = e.DataTransfer.TryGetFiles();
+        return files?.Any(f => f.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) == true;
+    }
+
+    private void OnDragEnter(object? sender, DragEventArgs e)
+    {
+        if (HasPdfFiles(e))
+            ViewModel.IsDraggingFile = true;
+    }
+
     private void OnDragOver(object? sender, DragEventArgs e)
     {
         e.DragEffects = DragDropEffects.None;
-        var files = e.DataTransfer.TryGetFiles();
-        if (files?.Any(f => f.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) == true)
+        if (HasPdfFiles(e))
+        {
             e.DragEffects = DragDropEffects.Copy;
+            ViewModel.IsDraggingFile = true;
+        }
+    }
+
+    private void OnDragLeave(object? sender, DragEventArgs e)
+    {
+        ViewModel.IsDraggingFile = false;
     }
 
     private void OnDrop(object? sender, DragEventArgs e)
     {
+        ViewModel.IsDraggingFile = false;
+
         var files = e.DataTransfer.TryGetFiles();
         var pdfFile = files?.FirstOrDefault(f => f.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase));
         var path = pdfFile?.TryGetLocalPath();

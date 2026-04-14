@@ -103,76 +103,114 @@
       </Border>
 
       <!-- ═══ PDF viewer ═══ -->
-      <ScrollViewer x:Name="PdfScrollViewer"
-                    HorizontalScrollBarVisibility="Auto"
-                    VerticalScrollBarVisibility="Auto"
-                    DragDrop.AllowDrop="True"
-                    Background="{DynamicResource SystemControlPageBackgroundChromeMediumLowBrush}">
-        <LayoutTransformControl x:Name="ZoomTransform">
-          <ItemsControl ItemsSource="{Binding Pages}" Margin="0,16">
-            <ItemsControl.ItemsPanel>
-              <ItemsPanelTemplate>
-                <StackPanel Orientation="Vertical" Spacing="0" HorizontalAlignment="Center" />
-              </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:PageItem">
-                <StackPanel>
-                  <!-- Insert-before (first page only) -->
-                  <Button Classes="insert-btn"
-                          IsVisible="{Binding IsFirst}"
-                          Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertPagesBeforeCommand}"
-                          CommandParameter="{Binding}"
-                          ToolTip.Tip="Insert pages before">
-                    <PathIcon Data="{StaticResource IconPlusCircle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
-                  </Button>
-
-                  <!-- Page with reorder arrows -->
-                  <Panel Margin="0,6">
-                    <Border BoxShadow="0 1 6 0 #30000000" Background="White">
-                      <views:PageCanvas
-                          PageBitmap="{Binding Bitmap}"
-                          PageIndex="{Binding Index}"
-                          PageWidthPt="{Binding WidthPt}"
-                          PageHeightPt="{Binding HeightPt}"
-                          Annotations="{Binding Annotations}"
-                          PlacementCursor="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).PlacementCursor}" />
-                    </Border>
-
-                    <!-- Reorder arrows (top-left overlay) -->
-                    <StackPanel Orientation="Vertical" Spacing="2"
-                                HorizontalAlignment="Left" VerticalAlignment="Top"
-                                Margin="4,4,0,0">
-                      <Button Classes="reorder-btn"
-                              IsVisible="{Binding !IsFirst}"
-                              Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).MovePageUpCommand}"
+      <Panel>
+        <ScrollViewer x:Name="PdfScrollViewer"
+                      HorizontalScrollBarVisibility="Auto"
+                      VerticalScrollBarVisibility="Auto"
+                      DragDrop.AllowDrop="True"
+                      Background="{DynamicResource SystemControlPageBackgroundChromeMediumLowBrush}">
+          <LayoutTransformControl x:Name="ZoomTransform">
+            <ItemsControl ItemsSource="{Binding Pages}" Margin="0,16">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <StackPanel Orientation="Vertical" Spacing="0" HorizontalAlignment="Center" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:PageItem">
+                  <StackPanel>
+                    <!-- Insert zone before (first page only) -->
+                    <Panel IsVisible="{Binding IsFirst}">
+                      <Button Classes="insert-btn"
+                              IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotDraggingFile}"
+                              Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertPagesBeforeCommand}"
                               CommandParameter="{Binding}"
-                              ToolTip.Tip="Move page up">
-                        <PathIcon Data="{StaticResource IconCaretUp}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
+                              ToolTip.Tip="Insert pages before">
+                        <PathIcon Data="{StaticResource IconPlusCircle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
                       </Button>
-                      <Button Classes="reorder-btn"
-                              IsVisible="{Binding !IsLast}"
-                              Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).MovePageDownCommand}"
-                              CommandParameter="{Binding}"
-                              ToolTip.Tip="Move page down">
-                        <PathIcon Data="{StaticResource IconCaretDown}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
-                      </Button>
-                    </StackPanel>
-                  </Panel>
+                      <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsDraggingFile}"
+                             Width="240" Height="40" Margin="0,4" HorizontalAlignment="Center">
+                        <Rectangle StrokeDashArray="6,3"
+                                   Stroke="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                                   StrokeThickness="1.5" RadiusX="8" RadiusY="8" />
+                        <TextBlock Text="Drop PDF to insert"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   FontSize="11" Opacity="0.5" />
+                      </Panel>
+                    </Panel>
 
-                  <!-- Insert-after (every page) -->
-                  <Button Classes="insert-btn"
-                          Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertPagesAfterCommand}"
-                          CommandParameter="{Binding}"
-                          ToolTip.Tip="Insert pages after">
-                    <PathIcon Data="{StaticResource IconPlusCircle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
-                  </Button>
-                </StackPanel>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </LayoutTransformControl>
-      </ScrollViewer>
+                    <!-- Page with reorder arrows -->
+                    <Panel Margin="0,6">
+                      <Border BoxShadow="0 1 6 0 #30000000" Background="White">
+                        <views:PageCanvas
+                            PageBitmap="{Binding Bitmap}"
+                            PageIndex="{Binding Index}"
+                            PageWidthPt="{Binding WidthPt}"
+                            PageHeightPt="{Binding HeightPt}"
+                            Annotations="{Binding Annotations}"
+                            PlacementCursor="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).PlacementCursor}" />
+                      </Border>
+
+                      <!-- Reorder arrows (top-left overlay) -->
+                      <StackPanel Orientation="Vertical" Spacing="2"
+                                  HorizontalAlignment="Left" VerticalAlignment="Top"
+                                  Margin="4,4,0,0">
+                        <Button Classes="reorder-btn"
+                                IsVisible="{Binding !IsFirst}"
+                                Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).MovePageUpCommand}"
+                                CommandParameter="{Binding}"
+                                ToolTip.Tip="Move page up">
+                          <PathIcon Data="{StaticResource IconCaretUp}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
+                        </Button>
+                        <Button Classes="reorder-btn"
+                                IsVisible="{Binding !IsLast}"
+                                Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).MovePageDownCommand}"
+                                CommandParameter="{Binding}"
+                                ToolTip.Tip="Move page down">
+                          <PathIcon Data="{StaticResource IconCaretDown}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
+                        </Button>
+                      </StackPanel>
+                    </Panel>
+
+                    <!-- Insert zone after (every page) -->
+                    <Panel>
+                      <Button Classes="insert-btn"
+                              IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotDraggingFile}"
+                              Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertPagesAfterCommand}"
+                              CommandParameter="{Binding}"
+                              ToolTip.Tip="Insert pages after">
+                        <PathIcon Data="{StaticResource IconPlusCircle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
+                      </Button>
+                      <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsDraggingFile}"
+                             Width="240" Height="40" Margin="0,4" HorizontalAlignment="Center">
+                        <Rectangle StrokeDashArray="6,3"
+                                   Stroke="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                                   StrokeThickness="1.5" RadiusX="8" RadiusY="8" />
+                        <TextBlock Text="Drop PDF to insert"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   FontSize="11" Opacity="0.5" />
+                      </Panel>
+                    </Panel>
+                  </StackPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </LayoutTransformControl>
+        </ScrollViewer>
+
+        <!-- Empty state overlay -->
+        <StackPanel IsVisible="{Binding HasNoPages}"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Spacing="8" Opacity="0.45">
+          <PathIcon Data="{StaticResource IconFolderOpen}"
+                    Foreground="{DynamicResource IconForeground}"
+                    Width="36" Height="36" HorizontalAlignment="Center" />
+          <TextBlock Text="Drop a PDF here to get started"
+                     FontSize="14" HorizontalAlignment="Center" />
+          <TextBlock Text="or click Open in the toolbar"
+                     FontSize="11" HorizontalAlignment="Center" />
+        </StackPanel>
+      </Panel>
 
     </DockPanel>
 
