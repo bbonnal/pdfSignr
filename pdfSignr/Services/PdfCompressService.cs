@@ -286,7 +286,7 @@ public static class PdfCompressService
                 page.Height = XUnitPt.FromPoint(heightPt);
 
                 using var imgStream = new MemoryStream(jpegBytes);
-                var xImage = XImage.FromStream(imgStream);
+                using var xImage = XImage.FromStream(imgStream);
                 using var gfx = XGraphics.FromPdfPage(page);
                 gfx.DrawImage(xImage, 0, 0, widthPt, heightPt);
 

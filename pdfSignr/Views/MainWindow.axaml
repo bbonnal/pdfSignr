@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:pdfSignr.ViewModels"
         xmlns:views="using:pdfSignr.Views"
+        xmlns:iconr="using:Iconr.Markup"
         x:Class="pdfSignr.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Title="pdfSignr"
@@ -20,10 +21,10 @@
 
           <StackPanel DockPanel.Dock="Top" Spacing="2" HorizontalAlignment="Center">
             <Button Classes="icon-btn" Command="{Binding OpenCommand}" ToolTip.Tip="Open PDF">
-              <PathIcon Data="{StaticResource IconFolderOpen}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
+              <PathIcon Data="{iconr:IconGeometry Icon=folder_open}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
             </Button>
             <Button Classes="icon-btn" Command="{Binding SaveCommand}" ToolTip.Tip="Save">
-              <PathIcon Data="{StaticResource IconFloppyDisk}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
+              <PathIcon Data="{iconr:IconGeometry Icon=floppy_disk}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
             </Button>
             <Button Classes="icon-btn" ToolTip.Tip="Compress / Rasterize PDF">
               <Button.Flyout>
@@ -47,18 +48,18 @@
                   </StackPanel>
                 </Flyout>
               </Button.Flyout>
-              <PathIcon Data="{StaticResource IconFileArrowDown}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
+              <PathIcon Data="{iconr:IconGeometry Icon=file_arrow_down}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
             </Button>
             <Border Height="1" Background="{DynamicResource SystemControlForegroundBaseLowBrush}" Margin="2,5" />
             <ToggleButton Classes="icon-btn"
                 IsChecked="{Binding IsTextToolActive, Mode=OneWay}"
                 Command="{Binding ToggleTextToolCommand}" ToolTip.Tip="{Binding TextToolTip}">
-              <PathIcon Data="{StaticResource IconTextAa}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
+              <PathIcon Data="{iconr:IconGeometry Icon=text_aa}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
             </ToggleButton>
             <ToggleButton Classes="icon-btn"
                 IsChecked="{Binding IsSignToolActive, Mode=OneWay}"
                 Command="{Binding ToggleSignToolCommand}" ToolTip.Tip="{Binding SignToolTip}">
-              <PathIcon Data="{StaticResource IconSignature}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
+              <PathIcon Data="{iconr:IconGeometry Icon=signature}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
             </ToggleButton>
           </StackPanel>
 
@@ -66,7 +67,7 @@
             <Button Classes="icon-btn" x:Name="ThemeToggle"
                     Click="OnThemeToggle" ToolTip.Tip="Toggle dark/light mode">
               <PathIcon x:Name="ThemeIcon"
-                     Data="{StaticResource IconSun}"
+                     Data="{iconr:IconGeometry Icon=sun}"
                      Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
             </Button>
           </StackPanel>
@@ -85,15 +86,15 @@
                       VerticalAlignment="Center">
             <Button Click="OnFitToWidth" ToolTip.Tip="Fit to width (Ctrl+0)"
                     Padding="3,2" Background="Transparent" BorderThickness="0" Cursor="Hand" Opacity="0.6">
-              <PathIcon Data="{StaticResource IconMagnifyingGlass}" Foreground="{DynamicResource IconForeground}" Width="15" Height="15" />
+              <PathIcon Data="{iconr:IconGeometry Icon=magnifying_glass}" Foreground="{DynamicResource IconForeground}" Width="15" Height="15" />
             </Button>
             <Button Click="OnZoomOut" ToolTip.Tip="Zoom out (Ctrl+-)"
                     Padding="3,2" Background="Transparent" BorderThickness="0" Cursor="Hand" Opacity="0.6">
-              <PathIcon Data="{StaticResource IconMagnifyingGlassMinus}" Foreground="{DynamicResource IconForeground}" Width="15" Height="15" />
+              <PathIcon Data="{iconr:IconGeometry Icon=magnifying_glass_minus}" Foreground="{DynamicResource IconForeground}" Width="15" Height="15" />
             </Button>
             <Button Click="OnZoomIn" ToolTip.Tip="Zoom in (Ctrl++)"
                     Padding="3,2" Background="Transparent" BorderThickness="0" Cursor="Hand" Opacity="0.6">
-              <PathIcon Data="{StaticResource IconMagnifyingGlassPlus}" Foreground="{DynamicResource IconForeground}" Width="15" Height="15" />
+              <PathIcon Data="{iconr:IconGeometry Icon=magnifying_glass_plus}" Foreground="{DynamicResource IconForeground}" Width="15" Height="15" />
             </Button>
           </StackPanel>
           <!-- Left: status text -->
@@ -126,7 +127,7 @@
                               Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertPagesBeforeCommand}"
                               CommandParameter="{Binding}"
                               ToolTip.Tip="Insert pages before">
-                        <PathIcon Data="{StaticResource IconPlusCircle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
+                        <PathIcon Data="{iconr:IconGeometry Icon=plus_circle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
                       </Button>
                       <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsDraggingFile}"
                              Width="240" Height="40" Margin="0,4" HorizontalAlignment="Center">
@@ -160,14 +161,14 @@
                                 Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).MovePageUpCommand}"
                                 CommandParameter="{Binding}"
                                 ToolTip.Tip="Move page up">
-                          <PathIcon Data="{StaticResource IconCaretUp}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
+                          <PathIcon Data="{iconr:IconGeometry Icon=caret_up}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
                         </Button>
                         <Button Classes="reorder-btn"
                                 IsVisible="{Binding !IsLast}"
                                 Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).MovePageDownCommand}"
                                 CommandParameter="{Binding}"
                                 ToolTip.Tip="Move page down">
-                          <PathIcon Data="{StaticResource IconCaretDown}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
+                          <PathIcon Data="{iconr:IconGeometry Icon=caret_down}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
                         </Button>
                       </StackPanel>
                     </Panel>
@@ -179,7 +180,7 @@
                               Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertPagesAfterCommand}"
                               CommandParameter="{Binding}"
                               ToolTip.Tip="Insert pages after">
-                        <PathIcon Data="{StaticResource IconPlusCircle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
+                        <PathIcon Data="{iconr:IconGeometry Icon=plus_circle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
                       </Button>
                       <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsDraggingFile}"
                              Width="240" Height="40" Margin="0,4" HorizontalAlignment="Center">
@@ -202,7 +203,7 @@
         <StackPanel IsVisible="{Binding HasNoPages}"
                     HorizontalAlignment="Center" VerticalAlignment="Center"
                     Spacing="8" Opacity="0.45">
-          <PathIcon Data="{StaticResource IconFolderOpen}"
+          <PathIcon Data="{iconr:IconGeometry Icon=folder_open}"
                     Foreground="{DynamicResource IconForeground}"
                     Width="36" Height="36" HorizontalAlignment="Center" />
           <TextBlock Text="Drop a PDF here to get started"

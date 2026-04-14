@@ -97,7 +97,7 @@ public static class PdfSaveService
         if (pngBytes.Length == 0) return;
 
         using var stream = new MemoryStream(pngBytes);
-        var image = XImage.FromStream(stream);
+        using var image = XImage.FromStream(stream);
 
         if (svg.Rotation != 0)
         {

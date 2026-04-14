@@ -42,14 +42,15 @@ public partial class TextAnnotation : Annotation
         set { if (SetProperty(ref _heightPt, value)) OnPropertyChanged(nameof(FontSize)); }
     }
 
-    private static readonly Dictionary<string, Typeface> TypefaceCache = new();
+    // Shared cache — also used by PageCanvas.MakeFormattedText
+    internal static readonly Dictionary<string, Typeface> TypefaceCache = new();
 
     private double ComputeFontSize()
     {
         if (_heightPt <= 0) return 12;
         // Measure text at a reference size to find the ratio
         const double refSize = 72.0;
-        const double dpiScale = 150.0 / 72.0;
+        const double dpiScale = 150.0 / 72.0; // must match MainViewModel.DpiScale
         if (!TypefaceCache.TryGetValue(FontFamily, out var typeface))
         {
             typeface = new Typeface(MapFontForMeasure(FontFamily));

@@ -27,6 +27,7 @@ public partial class PageItem : ObservableObject
 public partial class MainViewModel : ObservableObject
 {
     public const int RenderDpi = 150;
+    public const double DpiScale = RenderDpi / 72.0;
 
     private readonly Window _window;
     private IStorageProvider Storage => _window.StorageProvider;
@@ -48,7 +49,7 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsNotDraggingFile));
     }
 
-    public static string[] AvailableFonts { get; } = ["Helvetica", "Times-Roman", "Courier"];
+    public static string[] AvailableFonts => FontResolver.PdfFontNames;
 
     // Set by MainWindow when zoom changes
     public int ZoomPercent { get; set; } = 100;
@@ -134,35 +135,43 @@ public partial class MainViewModel : ObservableObject
 
     public void LoadPdf(string path)
     {
-        foreach (var page in Pages)
+        try
         {
-            page.Bitmap?.Dispose();
-            foreach (var ann in page.Annotations)
-                if (ann is SvgAnnotation svg) svg.RenderedBitmap?.Dispose();
-        }
-
-        PdfFilePath = path;
-        Pages.Clear();
-        SelectAnnotation(null);
-
-        var pdfBytes = File.ReadAllBytes(path);
-        var pageCount = PdfRenderService.GetPageCount(pdfBytes);
-
-        for (int i = 0; i < pageCount; i++)
-        {
-            var (w, h) = PdfRenderService.GetPageSize(pdfBytes, i);
-            var bitmap = PdfRenderService.RenderPage(pdfBytes, i, RenderDpi);
-            Pages.Add(new PageItem
+            foreach (var page in Pages)
             {
-                Index = i, Bitmap = bitmap, WidthPt = w, HeightPt = h,
-                Source = new PageSource(pdfBytes, i)
-            });
-        }
+                page.Bitmap?.Dispose();
+                foreach (var ann in page.Annotations)
+                    if (ann is SvgAnnotation svg) svg.RenderedBitmap?.Dispose();
+            }
 
-        RenumberPages();
-        _baseStatus = $"{Path.GetFileName(path)} \u2014 {pageCount} page{(pageCount != 1 ? "s" : "")}";
-        UpdateStatusText();
-        PdfLoaded?.Invoke();
+            PdfFilePath = path;
+            Pages.Clear();
+            SelectAnnotation(null);
+
+            var pdfBytes = File.ReadAllBytes(path);
+            var pageCount = PdfRenderService.GetPageCount(pdfBytes);
+
+            for (int i = 0; i < pageCount; i++)
+            {
+                var (w, h) = PdfRenderService.GetPageSize(pdfBytes, i);
+                var bitmap = PdfRenderService.RenderPage(pdfBytes, i, RenderDpi);
+                Pages.Add(new PageItem
+                {
+                    Index = i, Bitmap = bitmap, WidthPt = w, HeightPt = h,
+                    Source = new PageSource(pdfBytes, i)
+                });
+            }
+
+            RenumberPages();
+            _baseStatus = $"{Path.GetFileName(path)} \u2014 {pageCount} page{(pageCount != 1 ? "s" : "")}";
+            UpdateStatusText();
+            PdfLoaded?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            _baseStatus = $"Failed to open: {ex.Message}";
+            UpdateStatusText();
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanSave))]
@@ -320,28 +329,36 @@ public partial class MainViewModel : ObservableObject
 
     public void InsertPagesFromFile(string path, int insertIndex)
     {
-        var pdfBytes = File.ReadAllBytes(path);
-        var pageCount = PdfRenderService.GetPageCount(pdfBytes);
-
-        for (int i = 0; i < pageCount; i++)
+        try
         {
-            var (w, h) = PdfRenderService.GetPageSize(pdfBytes, i);
-            var bitmap = PdfRenderService.RenderPage(pdfBytes, i, RenderDpi);
-            var pageItem = new PageItem
+            var pdfBytes = File.ReadAllBytes(path);
+            var pageCount = PdfRenderService.GetPageCount(pdfBytes);
+
+            for (int i = 0; i < pageCount; i++)
             {
-                Index = insertIndex + i,
-                Bitmap = bitmap,
-                WidthPt = w,
-                HeightPt = h,
-                Source = new PageSource(pdfBytes, i)
-            };
-            Pages.Insert(insertIndex + i, pageItem);
+                var (w, h) = PdfRenderService.GetPageSize(pdfBytes, i);
+                var bitmap = PdfRenderService.RenderPage(pdfBytes, i, RenderDpi);
+                var pageItem = new PageItem
+                {
+                    Index = insertIndex + i,
+                    Bitmap = bitmap,
+                    WidthPt = w,
+                    HeightPt = h,
+                    Source = new PageSource(pdfBytes, i)
+                };
+                Pages.Insert(insertIndex + i, pageItem);
+            }
+
+            RenumberPages();
+
+            if (PdfFilePath == null)
+                PdfFilePath = path;
         }
-
-        RenumberPages();
-
-        if (PdfFilePath == null)
-            PdfFilePath = path;
+        catch (Exception ex)
+        {
+            _baseStatus = $"Failed to insert: {ex.Message}";
+            UpdateStatusText();
+        }
     }
 
     // --- PDF compression ---

@@ -8,6 +8,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Avalonia.Threading;
+using Iconr;
 using pdfSignr.Models;
 using pdfSignr.Services;
 using pdfSignr.ViewModels;
@@ -16,6 +17,10 @@ namespace pdfSignr.Views;
 
 public partial class MainWindow : Window
 {
+    private const double ZoomStep = 0.1;
+    private const double MinZoom = 0.1;
+    private const double MaxZoom = 5.0;
+
     private MainViewModel ViewModel => (MainViewModel)DataContext!;
     private TextAnnotation? _editingText;
     private double _zoom = 1.0;
@@ -73,6 +78,19 @@ public partial class MainWindow : Window
         ViewModel.PdfLoaded += OnPdfLoaded;
     }
 
+    protected override void OnClosed(EventArgs e)
+    {
+        ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        ViewModel.PdfLoaded -= OnPdfLoaded;
+        _rerenderTimer?.Stop();
+        _rerenderTimer = null;
+        _rerenderCts?.Cancel();
+        _rerenderCts?.Dispose();
+        _rerenderCts = null;
+        HideTextEditor();
+        base.OnClosed(e);
+    }
+
     // ═══ ViewModel tracking ═══
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -89,9 +107,9 @@ public partial class MainWindow : Window
     {
         if (!e.KeyModifiers.HasFlag(KeyModifiers.Control)) return;
 
-        double step = e.Delta.Y > 0 ? 0.1 : -0.1;
+        double step = e.Delta.Y > 0 ? ZoomStep : -ZoomStep;
         var cursorInViewport = e.GetPosition(PdfScrollViewer);
-        ApplyZoom(Math.Clamp(_zoom + step, 0.1, 5.0), cursorInViewport);
+        ApplyZoom(Math.Clamp(_zoom + step, MinZoom, MaxZoom), cursorInViewport);
         e.Handled = true;
     }
 
@@ -149,7 +167,7 @@ public partial class MainWindow : Window
         var viewportCenter = new Point(
             PdfScrollViewer.Viewport.Width / 2,
             PdfScrollViewer.Viewport.Height / 2);
-        ApplyZoom(Math.Clamp(available / pageScreenWidth, 0.1, 5.0), viewportCenter);
+        ApplyZoom(Math.Clamp(available / pageScreenWidth, MinZoom, MaxZoom), viewportCenter);
     }
 
     // ═══ Adaptive DPI re-render ═══
@@ -161,6 +179,8 @@ public partial class MainWindow : Window
 
         // Cancel any in-flight render and restart the debounce timer
         _rerenderCts?.Cancel();
+        _rerenderCts?.Dispose();
+        _rerenderCts = null;
 
         if (_rerenderTimer == null)
         {
@@ -194,6 +214,7 @@ public partial class MainWindow : Window
         _renderedDpi = targetDpi;
 
         _rerenderCts?.Cancel();
+        _rerenderCts?.Dispose();
         var cts = new CancellationTokenSource();
         _rerenderCts = cts;
 
@@ -296,9 +317,8 @@ public partial class MainWindow : Window
     {
         if (_editingText == null) return;
 
-        const double dpiScale = 150.0 / 72.0;
-        double annScreenX = _editingText.X * dpiScale;
-        double annScreenBottom = (_editingText.Y + _editingText.HeightPt) * dpiScale + 8;
+        double annScreenX = _editingText.X * MainViewModel.DpiScale;
+        double annScreenBottom = (_editingText.Y + _editingText.HeightPt) * MainViewModel.DpiScale + 8;
 
         // Find the PageCanvas hosting this annotation
         var canvas = FindCanvasForAnnotation(_editingText);
@@ -472,9 +492,9 @@ public partial class MainWindow : Window
             if (e.Key == Key.D0 || e.Key == Key.NumPad0)
             { FitToWidth(); e.Handled = true; }
             else if (e.Key == Key.OemPlus || e.Key == Key.Add)
-            { ApplyZoom(Math.Clamp(_zoom + 0.1, 0.1, 5.0)); e.Handled = true; }
+            { ApplyZoom(Math.Clamp(_zoom + ZoomStep, MinZoom, MaxZoom)); e.Handled = true; }
             else if (e.Key == Key.OemMinus || e.Key == Key.Subtract)
-            { ApplyZoom(Math.Clamp(_zoom - 0.1, 0.1, 5.0)); e.Handled = true; }
+            { ApplyZoom(Math.Clamp(_zoom - ZoomStep, MinZoom, MaxZoom)); e.Handled = true; }
         }
     }
 
@@ -501,8 +521,8 @@ public partial class MainWindow : Window
     // ═══ Zoom buttons ═══
 
     private void OnFitToWidth(object? sender, RoutedEventArgs e) => FitToWidth();
-    private void OnZoomIn(object? sender, RoutedEventArgs e) => ApplyZoom(Math.Clamp(_zoom + 0.1, 0.1, 5.0));
-    private void OnZoomOut(object? sender, RoutedEventArgs e) => ApplyZoom(Math.Clamp(_zoom - 0.1, 0.1, 5.0));
+    private void OnZoomIn(object? sender, RoutedEventArgs e) => ApplyZoom(Math.Clamp(_zoom + ZoomStep, MinZoom, MaxZoom));
+    private void OnZoomOut(object? sender, RoutedEventArgs e) => ApplyZoom(Math.Clamp(_zoom - ZoomStep, MinZoom, MaxZoom));
 
     // ═══ Theme toggle ═══
 
@@ -513,8 +533,6 @@ public partial class MainWindow : Window
         _isDark = !_isDark;
         Application.Current!.RequestedThemeVariant = _isDark ? ThemeVariant.Dark : ThemeVariant.Light;
 
-        var key = _isDark ? "IconSun" : "IconMoon";
-        if (Application.Current.TryFindResource(key, out var res) && res is StreamGeometry geo)
-            ThemeIcon.Data = geo;
+        ThemeIcon.Data = IconService.CreateGeometry(_isDark ? Iconr.Icon.sun : Iconr.Icon.moon);
     }
 }

@@ -9,6 +9,7 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using pdfSignr.Models;
+using pdfSignr.ViewModels;
 
 namespace pdfSignr.Views;
 
@@ -32,8 +33,7 @@ public class AnnotationSelectedEventArgs(RoutedEvent routedEvent, Annotation? an
 
 public class PageCanvas : Control
 {
-    private const double Dpi = 150;
-    private const double Scale = Dpi / 72.0;
+    private const double Scale = MainViewModel.DpiScale;
     private const double HandleRadius = 5;
     private const double HandleHit = 10;
     private const double RotateDistance = 28;
@@ -317,7 +317,7 @@ public class PageCanvas : Control
             svg.Scale = svg.OriginalWidthPt > 0 ? svg.WidthPt / svg.OriginalWidthPt : 1;
             svg.RenderedBitmap?.Dispose();
             svg.RenderedBitmap = Services.SvgRenderService.RenderForDisplay(
-                svg.SvgFilePath, svg.Scale, (int)Dpi);
+                svg.SvgFilePath, svg.Scale, MainViewModel.RenderDpi);
         }
 
         _state = State.Idle;
@@ -510,14 +510,12 @@ public class PageCanvas : Control
     private static double Dist(Point a, Point b) =>
         Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y));
 
-    private static readonly Dictionary<string, Typeface> TypefaceCache = new();
-
     private static FormattedText MakeFormattedText(TextAnnotation t)
     {
-        if (!TypefaceCache.TryGetValue(t.FontFamily, out var typeface))
+        if (!TextAnnotation.TypefaceCache.TryGetValue(t.FontFamily, out var typeface))
         {
             typeface = new Typeface(TextAnnotation.MapFontForMeasure(t.FontFamily));
-            TypefaceCache[t.FontFamily] = typeface;
+            TextAnnotation.TypefaceCache[t.FontFamily] = typeface;
         }
         return new FormattedText(
             t.Text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,

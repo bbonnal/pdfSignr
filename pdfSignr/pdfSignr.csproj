@@ -28,6 +28,7 @@
     <PackageReference Include="Svg.Skia" Version="3.7.0" />
     <!-- Pin transitive dep to fix GHSA-xrw6-gwf8-vvr9 (pulled by Avalonia.FreeDesktop) -->
     <PackageReference Include="Tmds.DBus.Protocol" Version="0.92.0" />
+    <PackageReference Include="Iconr" Version="1.0.0" />
   </ItemGroup>
 
   <ItemGroup>
