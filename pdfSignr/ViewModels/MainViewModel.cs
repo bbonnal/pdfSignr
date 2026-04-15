@@ -1,10 +1,8 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
-using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using pdfSignr.Models;
@@ -12,27 +10,12 @@ using pdfSignr.Services;
 
 namespace pdfSignr.ViewModels;
 
-public enum ToolMode { Select, Text, Signature }
-
-public partial class PageItem : ObservableObject
-{
-    [ObservableProperty] private int _index;
-    [ObservableProperty] private Bitmap? _bitmap;
-    [ObservableProperty] private bool _isFirst;
-    [ObservableProperty] private bool _isLast;
-    public double WidthPt { get; init; }
-    public double HeightPt { get; init; }
-    public PageSource Source { get; init; } = null!;
-    public ObservableCollection<Annotation> Annotations { get; } = new();
-}
-
 public partial class MainViewModel : ObservableObject
 {
     public const int RenderDpi = PdfConstants.RenderDpi;
     public const double DpiScale = PdfConstants.DpiScale;
 
-    private readonly Window _window;
-    private IStorageProvider Storage => _window.StorageProvider;
+    private readonly IFileDialogService _fileDialogs;
 
     [ObservableProperty] private string? _pdfFilePath;
     [ObservableProperty] private ObservableCollection<PageItem> _pages = new();
@@ -44,13 +27,46 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _isDraggingFile;
     [ObservableProperty] private double _buttonScale = 1.0;
     [ObservableProperty] private double _insertGapHeight = 28;
+    [ObservableProperty] private bool _isGridMode;
+    [ObservableProperty] private bool _isDraggingPage;
 
     public bool IsNotDraggingFile => !IsDraggingFile;
+    public bool IsNotDragging => !IsDraggingFile && !IsDraggingPage;
     public bool HasNoPages => Pages.Count == 0;
+    public bool IsNotGridMode => !IsGridMode;
 
     partial void OnIsDraggingFileChanged(bool value)
     {
         OnPropertyChanged(nameof(IsNotDraggingFile));
+        OnPropertyChanged(nameof(IsNotDragging));
+    }
+
+    partial void OnIsDraggingPageChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsNotDragging));
+    }
+
+    partial void OnIsGridModeChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsNotGridMode));
+    }
+
+    public void SetDropTarget(int insertIndex)
+    {
+        ClearDropTargets();
+        if (insertIndex == 0 && Pages.Count > 0)
+            Pages[0].IsDropTargetBefore = true;
+        else if (insertIndex > 0 && insertIndex <= Pages.Count)
+            Pages[insertIndex - 1].IsDropTargetAfter = true;
+    }
+
+    public void ClearDropTargets()
+    {
+        foreach (var page in Pages)
+        {
+            page.IsDropTargetAfter = false;
+            page.IsDropTargetBefore = false;
+        }
     }
 
     public static string[] AvailableFonts => FontResolver.PdfFontNames;
@@ -69,9 +85,9 @@ public partial class MainViewModel : ObservableObject
 
     public event Action? PdfLoaded;
 
-    public MainViewModel(Window window)
+    public MainViewModel(IFileDialogService fileDialogs)
     {
-        _window = window;
+        _fileDialogs = fileDialogs;
         Pages.CollectionChanged += OnPagesCollectionChanged;
     }
 
@@ -127,13 +143,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task Open()
     {
-        var files = await Storage.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "Open PDF",
-            FileTypeFilter = [new FilePickerFileType("PDF") { Patterns = ["*.pdf"] }]
-        });
-
-        var path = files.FirstOrDefault()?.TryGetLocalPath();
+        var path = await _fileDialogs.PickOpenFileAsync("Open PDF", ["*.pdf"]);
         if (path == null) return;
         LoadPdf(path);
     }
@@ -143,11 +153,7 @@ public partial class MainViewModel : ObservableObject
         try
         {
             foreach (var page in Pages)
-            {
-                page.Bitmap?.Dispose();
-                foreach (var ann in page.Annotations)
-                    if (ann is SvgAnnotation svg) svg.RenderedBitmap?.Dispose();
-            }
+                page.DisposeResources();
 
             PdfFilePath = path;
             Pages.Clear();
@@ -186,15 +192,7 @@ public partial class MainViewModel : ObservableObject
             ? Path.GetFileNameWithoutExtension(PdfFilePath) + "_signed"
             : "document_signed";
 
-        var file = await Storage.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            Title = "Save Annotated PDF",
-            SuggestedFileName = defaultName,
-            DefaultExtension = ".pdf",
-            FileTypeChoices = [new FilePickerFileType("PDF") { Patterns = ["*.pdf"] }]
-        });
-
-        var outputPath = file?.TryGetLocalPath();
+        var outputPath = await _fileDialogs.PickSaveFileAsync("Save Annotated PDF", defaultName, ".pdf", ["*.pdf"]);
         if (outputPath == null) return;
 
         var pagesWithAnnotations = Pages
@@ -221,7 +219,7 @@ public partial class MainViewModel : ObservableObject
         if (SelectedAnnotation == null) return;
 
         if (SelectedAnnotation is SvgAnnotation svg)
-            svg.RenderedBitmap?.Dispose();
+            svg.Dispose();
 
         foreach (var page in Pages)
         {
@@ -250,18 +248,68 @@ public partial class MainViewModel : ObservableObject
 
         if (SignatureSvgPath == null)
         {
-            var files = await Storage.OpenFilePickerAsync(new FilePickerOpenOptions
-            {
-                Title = "Select Signature",
-                FileTypeFilter = [new FilePickerFileType("Signature images") { Patterns = ["*.svg", "*.png", "*.jpg", "*.jpeg"] }]
-            });
-
-            var path = files.FirstOrDefault()?.TryGetLocalPath();
+            var path = await _fileDialogs.PickOpenFileAsync("Select Signature", ["*.svg", "*.png", "*.jpg", "*.jpeg"]);
             if (path == null) return; // Cancelled — stay in Select mode
             SignatureSvgPath = path;
         }
 
         CurrentTool = ToolMode.Signature;
+    }
+
+    // --- Save single page ---
+
+    [RelayCommand]
+    private async Task SaveSinglePage(PageItem page)
+    {
+        var defaultName = PdfFilePath != null
+            ? Path.GetFileNameWithoutExtension(PdfFilePath) + $"_page{page.Index + 1}"
+            : $"page{page.Index + 1}";
+
+        var outputPath = await _fileDialogs.PickSaveFileAsync("Save Single Page", defaultName, ".pdf", ["*.pdf"]);
+        if (outputPath == null) return;
+
+        try
+        {
+            PdfSaveService.SaveSinglePage(outputPath, page.Source, page.Annotations);
+            _baseStatus = $"Page {page.Index + 1} saved to {Path.GetFileName(outputPath)}";
+            UpdateStatusText();
+        }
+        catch (Exception ex)
+        {
+            _baseStatus = $"Save failed: {ex.Message}";
+            UpdateStatusText();
+        }
+    }
+
+    // --- Page removal ---
+
+    public event Action? PageStructureChanged;
+
+    [RelayCommand]
+    private void RemovePage(PageItem page)
+    {
+        var idx = Pages.IndexOf(page);
+        if (idx < 0) return;
+
+        page.DisposeResources();
+
+        if (SelectedAnnotation != null && page.Annotations.Contains(SelectedAnnotation))
+            SelectAnnotation(null);
+
+        Pages.RemoveAt(idx);
+
+        if (Pages.Count == 0)
+        {
+            PdfFilePath = null;
+            _baseStatus = "Open a PDF to get started";
+            UpdateStatusText();
+        }
+        else
+        {
+            RenumberPages();
+        }
+
+        PageStructureChanged?.Invoke();
     }
 
     // --- Page reordering ---
@@ -284,11 +332,12 @@ public partial class MainViewModel : ObservableObject
         RenumberPages();
     }
 
-    private void RenumberPages()
+    public void RenumberPages()
     {
         for (int i = 0; i < Pages.Count; i++)
         {
             Pages[i].Index = i;
+            Pages[i].DisplayNumber = i + 1;
             Pages[i].IsFirst = i == 0;
             Pages[i].IsLast = i == Pages.Count - 1;
             foreach (var ann in Pages[i].Annotations)
@@ -320,13 +369,7 @@ public partial class MainViewModel : ObservableObject
 
     private async Task InsertPagesAt(int insertIndex)
     {
-        var files = await Storage.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "Insert PDF Pages",
-            FileTypeFilter = [new FilePickerFileType("PDF") { Patterns = ["*.pdf"] }]
-        });
-
-        var path = files.FirstOrDefault()?.TryGetLocalPath();
+        var path = await _fileDialogs.PickOpenFileAsync("Insert PDF Pages", ["*.pdf"]);
         if (path == null) return;
 
         InsertPagesFromFile(path, insertIndex);
@@ -393,15 +436,8 @@ public partial class MainViewModel : ObservableObject
             ? Path.GetFileNameWithoutExtension(PdfFilePath) + suffix
             : "document" + suffix;
 
-        var file = await Storage.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            Title = rasterize ? "Save Rasterized PDF" : "Save Compressed PDF",
-            SuggestedFileName = defaultName,
-            DefaultExtension = ".pdf",
-            FileTypeChoices = [new FilePickerFileType("PDF") { Patterns = ["*.pdf"] }]
-        });
-
-        var outputPath = file?.TryGetLocalPath();
+        var title = rasterize ? "Save Rasterized PDF" : "Save Compressed PDF";
+        var outputPath = await _fileDialogs.PickSaveFileAsync(title, defaultName, ".pdf", ["*.pdf"]);
         if (outputPath == null) return;
 
         IsCompressing = true;

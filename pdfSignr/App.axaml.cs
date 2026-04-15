@@ -23,7 +23,8 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var window = new MainWindow();
-            var vm = new MainViewModel(window);
+            var fileDialogs = new FileDialogService(window.StorageProvider);
+            var vm = new MainViewModel(fileDialogs);
             window.DataContext = vm;
             desktop.MainWindow = window;
         }

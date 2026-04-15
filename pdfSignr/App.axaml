@@ -138,5 +138,17 @@
         <Style Selector="Button.reorder-btn:pointerover">
             <Setter Property="Background" Value="{DynamicResource ReorderBtnHoverBrush}" />
         </Style>
+
+        <!-- Drag handle (Border instead of Button to avoid pointer event conflicts) -->
+        <Style Selector="Border.drag-handle">
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Background" Value="{DynamicResource ReorderBtnBrush}" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style Selector="Border.drag-handle:pointerover">
+            <Setter Property="Background" Value="{DynamicResource ReorderBtnHoverBrush}" />
+        </Style>
     </Application.Styles>
 </Application>

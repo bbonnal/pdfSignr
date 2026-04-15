@@ -34,7 +34,7 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets/Fonts/*.ttf" />
-    <AvaloniaResource Include="Assets/signature_icon.png" />
+    <AvaloniaResource Include="Assets/signature_icon.ico" />
     <EmbeddedResource Include="Assets/Fonts/*.ttf" />
     <EmbeddedResource Include="Assets/Fonts/LICENSE-Liberation.txt" />
   </ItemGroup>

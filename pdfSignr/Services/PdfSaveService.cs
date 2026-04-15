@@ -8,11 +8,20 @@ namespace pdfSignr.Services;
 
 public static class PdfSaveService
 {
+    public static void SaveSinglePage(
+        string outputPath,
+        PageSource source,
+        IEnumerable<Annotation> annotations)
+    {
+        Save(outputPath, [(source, annotations)]);
+    }
+
     public static void Save(
         string outputPath,
         IEnumerable<(PageSource Source, IEnumerable<Annotation> Annotations)> pages)
     {
         var sourceDocCache = new Dictionary<byte[], PdfDocument>(ReferenceEqualityComparer.Instance);
+        var fileCache = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
         var outputDoc = new PdfDocument();
 
         try
@@ -40,7 +49,7 @@ public static class PdfSaveService
                                 DrawText(gfx, text);
                                 break;
                             case SvgAnnotation svg:
-                                DrawSvg(gfx, svg);
+                                DrawSvg(gfx, svg, fileCache);
                                 break;
                         }
                     }
@@ -90,11 +99,11 @@ public static class PdfSaveService
             gfx.DrawString(text.Text, font, XBrushes.Black, new XPoint(text.X, text.Y), format));
     }
 
-    private static void DrawSvg(XGraphics gfx, SvgAnnotation svg)
+    private static void DrawSvg(XGraphics gfx, SvgAnnotation svg, Dictionary<string, byte[]> fileCache)
     {
         if (svg.IsRaster)
         {
-            DrawRasterImage(gfx, svg);
+            DrawRasterImage(gfx, svg, fileCache);
             return;
         }
 
@@ -108,9 +117,13 @@ public static class PdfSaveService
             gfx.DrawImage(form, svg.X, svg.Y, svg.WidthPt, svg.HeightPt));
     }
 
-    private static void DrawRasterImage(XGraphics gfx, SvgAnnotation ann)
+    private static void DrawRasterImage(XGraphics gfx, SvgAnnotation ann, Dictionary<string, byte[]> fileCache)
     {
-        var imageBytes = File.ReadAllBytes(ann.SvgFilePath);
+        if (!fileCache.TryGetValue(ann.SvgFilePath, out var imageBytes))
+        {
+            imageBytes = File.ReadAllBytes(ann.SvgFilePath);
+            fileCache[ann.SvgFilePath] = imageBytes;
+        }
         if (imageBytes.Length == 0) return;
 
         using var stream = new MemoryStream(imageBytes);

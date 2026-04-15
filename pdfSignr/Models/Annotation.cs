@@ -74,7 +74,7 @@ public partial class TextAnnotation : Annotation
 }
 
 /// <summary>Annotation backed by an external file (SVG vector or raster PNG/JPG).</summary>
-public partial class SvgAnnotation : Annotation
+public partial class SvgAnnotation : Annotation, IDisposable
 {
     [ObservableProperty] private string _svgFilePath = "";
     [ObservableProperty] private double _scale = 1.0;
@@ -97,5 +97,29 @@ public partial class SvgAnnotation : Annotation
     {
         get => _svgHeightPt;
         set => SetProperty(ref _svgHeightPt, value);
+    }
+
+    /// <summary>Stores a new rendered bitmap and disposes the old one.</summary>
+    public void ReplaceRenderedBitmap(Bitmap newBitmap, int dpi)
+    {
+        var old = RenderedBitmap;
+        RenderedBitmap = newBitmap;
+        RenderedDpi = dpi;
+        old?.Dispose();
+    }
+
+    /// <summary>Re-renders the display bitmap at the given DPI.</summary>
+    public void ReRender(int dpi)
+    {
+        var bitmap = IsRaster
+            ? SvgRenderService.ResampleForDisplay(SvgFilePath, WidthPt, HeightPt, dpi)
+            : SvgRenderService.RenderForDisplay(SvgFilePath, Scale, dpi);
+        ReplaceRenderedBitmap(bitmap, dpi);
+    }
+
+    public void Dispose()
+    {
+        RenderedBitmap?.Dispose();
+        RenderedBitmap = null;
     }
 }

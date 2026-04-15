@@ -315,18 +315,7 @@ public class PageCanvas : Control
         if (_state == State.Resizing && _target is SvgAnnotation svg)
         {
             svg.Scale = svg.OriginalWidthPt > 0 ? svg.WidthPt / svg.OriginalWidthPt : 1;
-            svg.RenderedBitmap?.Dispose();
-            if (svg.IsRaster)
-            {
-                svg.RenderedBitmap = Services.SvgRenderService.ResampleForDisplay(
-                    svg.SvgFilePath, svg.WidthPt, svg.HeightPt, MainViewModel.RenderDpi);
-            }
-            else
-            {
-                svg.RenderedBitmap = Services.SvgRenderService.RenderForDisplay(
-                    svg.SvgFilePath, svg.Scale, MainViewModel.RenderDpi);
-            }
-            svg.RenderedDpi = MainViewModel.RenderDpi;
+            svg.ReRender(MainViewModel.RenderDpi);
         }
 
         _state = State.Idle;

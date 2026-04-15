@@ -2,6 +2,7 @@ using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Presenters;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
@@ -30,6 +31,15 @@ public partial class MainWindow : Window
     private DispatcherTimer? _rerenderTimer;
     private DispatcherTimer? _scrollTimer;
     private CancellationTokenSource? _rerenderCts;
+
+    // Page drag-to-reorder state
+    private const double DragThreshold = 8;
+    private bool _pageDragPending;
+    private bool _pageDragging;
+    private PageItem? _dragSourcePage;
+    private Point _dragStartPos;
+    private Border? _dragAdorner;
+    private int _dropTargetIndex = -1;
 
     public MainWindow()
     {
@@ -83,6 +93,7 @@ public partial class MainWindow : Window
         base.OnLoaded(e);
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         ViewModel.PdfLoaded += OnPdfLoaded;
+        ViewModel.PageStructureChanged += OnPageStructureChanged;
 
         // Warm up the StorageProvider so the first file-open dialog is fast.
         // On Linux/WSL this forces the D-Bus portal connection to initialize in the background.
@@ -93,6 +104,7 @@ public partial class MainWindow : Window
     {
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         ViewModel.PdfLoaded -= OnPdfLoaded;
+        ViewModel.PageStructureChanged -= OnPageStructureChanged;
         _rerenderTimer?.Stop();
         _rerenderTimer = null;
         _scrollTimer?.Stop();
@@ -112,6 +124,20 @@ public partial class MainWindow : Window
         {
             UpdateTextEditor();
         }
+    }
+
+    private void OnPageStructureChanged()
+    {
+        // Rebuild _pageDpi since indices shifted after page removal/reorder
+        var rebuilt = new Dictionary<int, int>();
+        foreach (var page in ViewModel.Pages)
+        {
+            if (_pageDpi.TryGetValue(page.Index, out var dpi))
+                rebuilt[page.Index] = dpi;
+        }
+        _pageDpi.Clear();
+        foreach (var (k, v) in rebuilt)
+            _pageDpi[k] = v;
     }
 
     // ═══ Zoom ═══
@@ -274,7 +300,7 @@ public partial class MainWindow : Window
                 visible.Add(i);
                 foundVisible = true;
             }
-            else if (foundVisible)
+            else if (foundVisible && !ViewModel.IsGridMode)
             {
                 break; // pages are vertical — all remaining are below viewport
             }
@@ -331,31 +357,9 @@ public partial class MainWindow : Window
         {
             if (cts.Token.IsCancellationRequested) return;
 
-            Avalonia.Media.Imaging.Bitmap bitmap;
-            if (ann.IsRaster)
-            {
-                bitmap = await Task.Run(
-                    () => SvgRenderService.ResampleForDisplay(
-                        ann.SvgFilePath, ann.WidthPt, ann.HeightPt, dpi),
-                    cts.Token);
-            }
-            else
-            {
-                bitmap = await Task.Run(
-                    () => SvgRenderService.RenderForDisplay(ann.SvgFilePath, ann.Scale, dpi),
-                    cts.Token);
-            }
+            await Task.Run(() => ann.ReRender(dpi), cts.Token);
 
-            if (cts.Token.IsCancellationRequested)
-            {
-                bitmap.Dispose();
-                return;
-            }
-
-            var old = ann.RenderedBitmap;
-            ann.RenderedBitmap = bitmap;
-            ann.RenderedDpi = dpi;
-            old?.Dispose();
+            if (cts.Token.IsCancellationRequested) return;
         }
     }
 
@@ -488,7 +492,152 @@ public partial class MainWindow : Window
         return null;
     }
 
-    // ═══ Drag-and-drop ═══
+    // ═══ Page drag-to-reorder ═══
+
+    private void OnDragHandlePressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not Control handle) return;
+        var pageItem = FindPageItemFromControl(handle);
+        if (pageItem == null) return;
+
+        _pageDragPending = true;
+        _pageDragging = false;
+        _dragSourcePage = pageItem;
+        _dragStartPos = e.GetPosition(this);
+        _dropTargetIndex = -1;
+
+        e.Pointer.Capture(handle);
+        handle.PointerMoved += OnDragHandleMoved;
+        handle.PointerReleased += OnDragHandleReleased;
+        e.Handled = true;
+    }
+
+    private void OnDragHandleMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_pageDragPending || _dragSourcePage == null) return;
+
+        var pos = e.GetPosition(this);
+        var delta = pos - _dragStartPos;
+
+        if (!_pageDragging)
+        {
+            if (Math.Abs(delta.X) < DragThreshold && Math.Abs(delta.Y) < DragThreshold)
+                return;
+            _pageDragging = true;
+            ViewModel.IsDraggingPage = true;
+            CreateDragAdorner(pos);
+        }
+
+        // Move adorner
+        if (_dragAdorner != null)
+        {
+            _dragAdorner.Margin = new Thickness(
+                pos.X - _dragAdorner.Width / 2,
+                pos.Y - _dragAdorner.Height / 2, 0, 0);
+        }
+
+        // Hit-test to find drop target
+        UpdateDropTarget(e.GetPosition(PdfScrollViewer));
+    }
+
+    private void OnDragHandleReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (sender is Control handle)
+        {
+            handle.PointerMoved -= OnDragHandleMoved;
+            handle.PointerReleased -= OnDragHandleReleased;
+            e.Pointer.Capture(null);
+        }
+
+        if (_pageDragging && _dragSourcePage != null && _dropTargetIndex >= 0)
+        {
+            int fromIndex = ViewModel.Pages.IndexOf(_dragSourcePage);
+            int toIndex = _dropTargetIndex;
+            // Adjust target: if moving forward, the removal shifts indices
+            if (fromIndex < toIndex) toIndex--;
+            if (fromIndex >= 0 && toIndex >= 0 && toIndex < ViewModel.Pages.Count && fromIndex != toIndex)
+            {
+                ViewModel.Pages.Move(fromIndex, toIndex);
+                ViewModel.RenumberPages();
+                OnPageStructureChanged();
+            }
+        }
+
+        RemoveDragAdorner();
+        ViewModel.ClearDropTargets();
+        _pageDragPending = false;
+        _pageDragging = false;
+        _dragSourcePage = null;
+        _dropTargetIndex = -1;
+        ViewModel.IsDraggingPage = false;
+        e.Handled = true;
+    }
+
+    private void CreateDragAdorner(Point pos)
+    {
+        if (_dragSourcePage?.Bitmap == null) return;
+
+        // Create a small thumbnail of the page
+        double thumbW = 80;
+        double thumbH = thumbW * (_dragSourcePage.HeightPt / _dragSourcePage.WidthPt);
+
+        var image = new Avalonia.Controls.Image
+        {
+            Source = _dragSourcePage.Bitmap,
+            Width = thumbW,
+            Height = thumbH
+        };
+
+        _dragAdorner = new Border
+        {
+            Child = image,
+            Background = Brushes.White,
+            BoxShadow = new BoxShadows(new BoxShadow { OffsetX = 0, OffsetY = 2, Blur = 8, Color = new Color(100, 0, 0, 0) }),
+            Opacity = 0.8,
+            Width = thumbW,
+            Height = thumbH,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top,
+            IsHitTestVisible = false,
+            Margin = new Thickness(pos.X - thumbW / 2, pos.Y - thumbH / 2, 0, 0)
+        };
+
+        // Add to the top-level Panel (parent of DockPanel)
+        if (Content is Panel rootPanel)
+        {
+            rootPanel.Children.Add(_dragAdorner);
+        }
+    }
+
+    private void RemoveDragAdorner()
+    {
+        if (Content is Panel rootPanel)
+        {
+            if (_dragAdorner != null) rootPanel.Children.Remove(_dragAdorner);
+        }
+        _dragAdorner = null;
+    }
+
+    private void UpdateDropTarget(Point posInScrollViewer)
+    {
+        _dropTargetIndex = FindInsertionIndex(posInScrollViewer);
+        ViewModel.SetDropTarget(_dropTargetIndex);
+    }
+
+    private static PageItem? FindPageItemFromControl(Control control)
+    {
+        // Walk up the visual/logical tree to find the PageItem DataContext
+        Control? current = control;
+        while (current != null)
+        {
+            if (current.DataContext is PageItem page)
+                return page;
+            current = current.Parent as Control;
+        }
+        return null;
+    }
+
+    // ═══ Drag-and-drop (file) ═══
 
     private static bool HasPdfFiles(DragEventArgs e)
     {
@@ -539,33 +688,63 @@ public partial class MainWindow : Window
         }
         else
         {
-            int insertIndex = GetInsertionIndex(e);
+            int insertIndex = FindInsertionIndex(e.GetPosition(PdfScrollViewer));
             ViewModel.InsertPagesFromFile(path, insertIndex);
         }
     }
 
-    private int GetInsertionIndex(DragEventArgs e)
+    private int FindInsertionIndex(Point posInScrollViewer)
     {
         if (ViewModel.Pages.Count == 0) return 0;
 
-        var dropPos = e.GetPosition(PdfScrollViewer);
         var itemsControl = (ItemsControl)ZoomTransform.Child!;
+        int bestIndex = ViewModel.Pages.Count;
+        double minDist = double.MaxValue;
 
         for (int i = 0; i < ViewModel.Pages.Count; i++)
         {
             var container = itemsControl.ContainerFromIndex(i);
             if (container == null) continue;
 
-            // Translate container midpoint to ScrollViewer coordinates
-            var mid = new Point(0, container.Bounds.Height / 2);
-            var inScrollViewer = container.TranslatePoint(mid, PdfScrollViewer);
-            if (inScrollViewer == null) continue;
+            var topLeft = container.TranslatePoint(new Point(0, 0), PdfScrollViewer);
+            var bottomRight = container.TranslatePoint(
+                new Point(container.Bounds.Width, container.Bounds.Height), PdfScrollViewer);
+            if (topLeft == null || bottomRight == null) continue;
 
-            if (dropPos.Y < inScrollViewer.Value.Y)
-                return i;
+            double midX = (topLeft.Value.X + bottomRight.Value.X) / 2;
+            double midY = (topLeft.Value.Y + bottomRight.Value.Y) / 2;
+
+            if (ViewModel.IsGridMode)
+            {
+                double dist = (posInScrollViewer.X - midX) * (posInScrollViewer.X - midX)
+                            + (posInScrollViewer.Y - midY) * (posInScrollViewer.Y - midY);
+                if (dist < minDist)
+                {
+                    minDist = dist;
+                    bestIndex = posInScrollViewer.X < midX ? i : i + 1;
+                }
+            }
+            else
+            {
+                double dist = Math.Abs(posInScrollViewer.Y - topLeft.Value.Y);
+                if (dist < minDist)
+                {
+                    minDist = dist;
+                    bestIndex = i;
+                }
+                // Also check bottom of last page
+                if (i == ViewModel.Pages.Count - 1)
+                {
+                    double distBottom = Math.Abs(posInScrollViewer.Y - bottomRight.Value.Y);
+                    if (distBottom < minDist)
+                    {
+                        bestIndex = i + 1;
+                    }
+                }
+            }
         }
 
-        return ViewModel.Pages.Count;
+        return Math.Min(bestIndex, ViewModel.Pages.Count);
     }
 
     // ═══ Fit-to-width on load ═══
@@ -651,6 +830,48 @@ public partial class MainWindow : Window
     private void OnFitToWidth(object? sender, RoutedEventArgs e) => FitToWidth();
     private void OnZoomIn(object? sender, RoutedEventArgs e) => ApplyZoom(Math.Clamp(_zoom + ZoomStep, MinZoom, MaxZoom));
     private void OnZoomOut(object? sender, RoutedEventArgs e) => ApplyZoom(Math.Clamp(_zoom - ZoomStep, MinZoom, MaxZoom));
+
+    // ═══ Grid / list toggle ═══
+
+    private void OnToggleGridMode(object? sender, RoutedEventArgs e)
+    {
+        ViewModel.IsGridMode = !ViewModel.IsGridMode;
+        ApplyGridMode(ViewModel.IsGridMode);
+    }
+
+    private void ApplyGridMode(bool gridMode)
+    {
+        var itemsControl = (ItemsControl)ZoomTransform.Child!;
+
+        if (gridMode)
+        {
+            PdfScrollViewer.HorizontalScrollBarVisibility =
+                Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
+            itemsControl.ItemsPanel = new FuncTemplate<Panel?>(() =>
+                new WrapPanel
+                {
+                    Orientation = Avalonia.Layout.Orientation.Horizontal,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center
+                });
+            GridToggleIcon.Data = IconService.CreateGeometry(Iconr.Icon.rows);
+        }
+        else
+        {
+            PdfScrollViewer.HorizontalScrollBarVisibility =
+                Avalonia.Controls.Primitives.ScrollBarVisibility.Auto;
+            itemsControl.ItemsPanel = new FuncTemplate<Panel?>(() =>
+                new StackPanel
+                {
+                    Orientation = Avalonia.Layout.Orientation.Vertical,
+                    Spacing = 0,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center
+                });
+            GridToggleIcon.Data = IconService.CreateGeometry(Iconr.Icon.squares_four);
+        }
+
+        // Visible pages change when layout switches, schedule re-render
+        ScheduleRerender();
+    }
 
     // ═══ Theme toggle ═══
 

@@ -21,8 +21,8 @@ cp -r "$PUBLISH_DIR"/* "$APP_DIR/usr/bin/"
 
 # Copy desktop file and icon
 cp "$SCRIPT_DIR/pdfSignr.desktop" "$APP_DIR/pdfSignr.desktop"
-cp "$ROOT_DIR/pdfSignr/Assets/signature_icon.png" "$APP_DIR/pdfSignr.png"
-cp "$ROOT_DIR/pdfSignr/Assets/signature_icon.png" "$APP_DIR/usr/share/icons/hicolor/256x256/apps/pdfSignr.png"
+cp "$ROOT_DIR/pdfSignr/Assets/signature_icon.ico" "$APP_DIR/pdfSignr.ico"
+cp "$ROOT_DIR/pdfSignr/Assets/signature_icon.ico" "$APP_DIR/usr/share/icons/hicolor/256x256/apps/pdfSignr.ico"
 
 # Create AppRun
 cat > "$APP_DIR/AppRun" << 'APPRUN'

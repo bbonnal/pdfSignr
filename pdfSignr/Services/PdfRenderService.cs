@@ -6,14 +6,8 @@ namespace pdfSignr.Services;
 [SuppressMessage("Interoperability", "CA1416:Validate platform compatibility")]
 public static class PdfRenderService
 {
-    public static int GetPageCount(string pdfPath)
-        => GetPageCount(File.ReadAllBytes(pdfPath));
-
     public static int GetPageCount(byte[] pdfBytes)
         => Conversion.GetPageCount(pdfBytes);
-
-    public static (double WidthPt, double HeightPt) GetPageSize(string pdfPath, int pageIndex)
-        => GetPageSize(File.ReadAllBytes(pdfPath), pageIndex);
 
     public static (double WidthPt, double HeightPt) GetPageSize(byte[] pdfBytes, int pageIndex)
     {
