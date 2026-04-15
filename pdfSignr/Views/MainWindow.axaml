@@ -20,10 +20,10 @@
         <DockPanel Margin="3,6,3,6">
 
           <StackPanel DockPanel.Dock="Top" Spacing="2" HorizontalAlignment="Center">
-            <Button Classes="icon-btn" Command="{Binding OpenCommand}" ToolTip.Tip="Open PDF">
+            <Button Classes="icon-btn" Command="{Binding OpenCommand}" ToolTip.Tip="Open PDF (Ctrl+O)">
               <PathIcon Data="{iconr:IconGeometry Icon=folder_open}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
             </Button>
-            <Button Classes="icon-btn" Command="{Binding SaveCommand}" ToolTip.Tip="Save">
+            <Button Classes="icon-btn" Command="{Binding SaveCommand}" ToolTip.Tip="Save (Ctrl+S)">
               <PathIcon Data="{iconr:IconGeometry Icon=floppy_disk}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
             </Button>
             <Button Classes="icon-btn" ToolTip.Tip="Compress / Rasterize PDF">
@@ -84,24 +84,20 @@
           <!-- Right: zoom controls -->
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4"
                       VerticalAlignment="Center">
-            <Button x:Name="GridToggleBtn" Click="OnToggleGridMode"
-                    ToolTip.Tip="Toggle grid / list view"
-                    Padding="3,2" Background="Transparent" BorderThickness="0" Cursor="Hand" Opacity="0.6">
+            <Button Classes="statusbar-btn" x:Name="GridToggleBtn" Click="OnToggleGridMode"
+                    ToolTip.Tip="Toggle grid / list view">
               <PathIcon x:Name="GridToggleIcon"
                         Data="{iconr:IconGeometry Icon=squares_four}"
                         Foreground="{DynamicResource IconForeground}" Width="15" Height="15" />
             </Button>
             <Border Width="1" Height="14" Background="{DynamicResource SystemControlForegroundBaseLowBrush}" Margin="2,0" />
-            <Button Click="OnFitToWidth" ToolTip.Tip="Fit to width (Ctrl+0)"
-                    Padding="3,2" Background="Transparent" BorderThickness="0" Cursor="Hand" Opacity="0.6">
+            <Button Classes="statusbar-btn" Click="OnFitToWidth" ToolTip.Tip="Fit to width (Ctrl+0)">
               <PathIcon Data="{iconr:IconGeometry Icon=magnifying_glass}" Foreground="{DynamicResource IconForeground}" Width="15" Height="15" />
             </Button>
-            <Button Click="OnZoomOut" ToolTip.Tip="Zoom out (Ctrl+-)"
-                    Padding="3,2" Background="Transparent" BorderThickness="0" Cursor="Hand" Opacity="0.6">
+            <Button Classes="statusbar-btn" Click="OnZoomOut" ToolTip.Tip="Zoom out (Ctrl+-)">
               <PathIcon Data="{iconr:IconGeometry Icon=magnifying_glass_minus}" Foreground="{DynamicResource IconForeground}" Width="15" Height="15" />
             </Button>
-            <Button Click="OnZoomIn" ToolTip.Tip="Zoom in (Ctrl++)"
-                    Padding="3,2" Background="Transparent" BorderThickness="0" Cursor="Hand" Opacity="0.6">
+            <Button Classes="statusbar-btn" Click="OnZoomIn" ToolTip.Tip="Zoom in (Ctrl++)">
               <PathIcon Data="{iconr:IconGeometry Icon=magnifying_glass_plus}" Foreground="{DynamicResource IconForeground}" Width="15" Height="15" />
             </Button>
           </StackPanel>
@@ -156,11 +152,11 @@
                         </Panel>
                         <Panel IsVisible="{Binding IsDropTargetBefore}"
                                Width="240" Height="40" Margin="0,4" HorizontalAlignment="Center">
-                          <Rectangle StrokeDashArray="6,3" Stroke="#3B82F6"
+                          <Rectangle StrokeDashArray="6,3" Stroke="{DynamicResource AccentBrush}"
                                      StrokeThickness="2" RadiusX="8" RadiusY="8" />
                           <TextBlock Text="Move page here"
                                      HorizontalAlignment="Center" VerticalAlignment="Center"
-                                     FontSize="11" Foreground="#3B82F6" Opacity="0.8" />
+                                     FontSize="11" Foreground="{DynamicResource AccentBrush}" Opacity="0.8" />
                         </Panel>
                       </Panel>
                     </Panel>
@@ -235,7 +231,7 @@
 
                       <!-- C1: Page -->
                       <Panel Grid.Column="1">
-                        <Border BoxShadow="0 1 6 0 #30000000" Background="White">
+                        <Border BoxShadow="{DynamicResource PageShadow}" Background="{DynamicResource PageSurfaceBrush}">
                           <views:PageCanvas
                               PageBitmap="{Binding Bitmap}"
                               PageIndex="{Binding Index}"
@@ -246,10 +242,10 @@
                         </Border>
                         <!-- Page number overlay (grid mode only) -->
                         <Border IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsGridMode}"
-                                Background="#80000000" CornerRadius="4" Padding="6,2"
+                                Background="{DynamicResource PageNumberBadgeBrush}" CornerRadius="4" Padding="6,2"
                                 HorizontalAlignment="Center" VerticalAlignment="Bottom"
                                 Margin="0,0,0,6">
-                          <TextBlock Text="{Binding DisplayNumber}" Foreground="White"
+                          <TextBlock Text="{Binding DisplayNumber}" Foreground="{DynamicResource PageNumberForeground}"
                                      FontSize="11" FontWeight="SemiBold" />
                         </Border>
                       </Panel>
@@ -268,7 +264,7 @@
                                   Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).RemovePageCommand}"
                                   CommandParameter="{Binding}"
                                   ToolTip.Tip="Remove this page">
-                            <PathIcon Data="{iconr:IconGeometry Icon=trash}" Foreground="#CC4444" Width="14" Height="14" />
+                            <PathIcon Data="{iconr:IconGeometry Icon=trash}" Foreground="{DynamicResource DangerForeground}" Width="14" Height="14" />
                           </Button>
                           <Border Classes="drag-handle"
                                   ToolTip.Tip="Drag to reorder"
@@ -304,18 +300,20 @@
                           </Border>
                           <Border IsVisible="{Binding IsDropTargetAfter}"
                                   HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                                  Background="#303B82F6" CornerRadius="4" Margin="2,4">
-                            <Rectangle Stroke="#3B82F6" StrokeThickness="2"
+                                  Background="{DynamicResource AccentOverlayBrush}" CornerRadius="4" Margin="2,4">
+                            <Rectangle Stroke="{DynamicResource AccentBrush}" StrokeThickness="2"
                                        StrokeDashArray="4,3" RadiusX="4" RadiusY="4" />
                           </Border>
                         </Panel>
                       </LayoutTransformControl>
                     </Grid>
                     <!-- Grid mode: left-edge drop indicator (drop before this page) -->
-                    <Border IsVisible="{Binding IsDropTargetBefore}"
-                            Width="4" HorizontalAlignment="Left" VerticalAlignment="Stretch"
-                            Background="#3B82F6" CornerRadius="2"
-                            Margin="2,6,0,6" IsHitTestVisible="False" />
+                    <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsGridMode}" IsHitTestVisible="False">
+                      <Border IsVisible="{Binding IsDropTargetBefore}"
+                              Width="4" HorizontalAlignment="Left" VerticalAlignment="Stretch"
+                              Background="{DynamicResource AccentBrush}" CornerRadius="2"
+                              Margin="2,6,0,6" />
+                    </Panel>
                     </Panel>
 
                     <!-- ═══ Insert zone AFTER (list mode only) ═══ -->
@@ -345,11 +343,11 @@
                       </Panel>
                       <Panel IsVisible="{Binding IsDropTargetAfter}"
                              Width="240" Height="40" Margin="0,4" HorizontalAlignment="Center">
-                        <Rectangle StrokeDashArray="6,3" Stroke="#3B82F6"
+                        <Rectangle StrokeDashArray="6,3" Stroke="{DynamicResource AccentBrush}"
                                    StrokeThickness="2" RadiusX="8" RadiusY="8" />
                         <TextBlock Text="Move page here"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"
-                                   FontSize="11" Foreground="#3B82F6" Opacity="0.8" />
+                                   FontSize="11" Foreground="{DynamicResource AccentBrush}" Opacity="0.8" />
                       </Panel>
                     </Panel>
 
@@ -361,17 +359,23 @@
         </ScrollViewer>
 
         <!-- Empty state overlay -->
-        <StackPanel IsVisible="{Binding HasNoPages}"
-                    HorizontalAlignment="Center" VerticalAlignment="Center"
-                    Spacing="8" Opacity="0.45">
-          <PathIcon Data="{iconr:IconGeometry Icon=folder_open}"
-                    Foreground="{DynamicResource IconForeground}"
-                    Width="36" Height="36" HorizontalAlignment="Center" />
-          <TextBlock Text="Drop a PDF here to get started"
-                     FontSize="14" HorizontalAlignment="Center" />
-          <TextBlock Text="or click Open in the toolbar"
-                     FontSize="11" HorizontalAlignment="Center" />
-        </StackPanel>
+        <Panel IsVisible="{Binding HasNoPages}"
+               HorizontalAlignment="Center" VerticalAlignment="Center"
+               Width="320" Height="180">
+          <Rectangle StrokeDashArray="6,4"
+                     Stroke="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                     StrokeThickness="2" RadiusX="12" RadiusY="12" />
+          <StackPanel Spacing="8" Opacity="0.5"
+                      HorizontalAlignment="Center" VerticalAlignment="Center">
+            <PathIcon Data="{iconr:IconGeometry Icon=folder_open}"
+                      Foreground="{DynamicResource IconForeground}"
+                      Width="36" Height="36" HorizontalAlignment="Center" />
+            <TextBlock Text="Drop a PDF here to get started"
+                       FontSize="14" HorizontalAlignment="Center" />
+            <TextBlock Text="or press Ctrl+O to open"
+                       FontSize="11" HorizontalAlignment="Center" />
+          </StackPanel>
+        </Panel>
       </Panel>
 
     </DockPanel>
@@ -382,7 +386,7 @@
             Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
             BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
             BorderThickness="1" CornerRadius="6" Padding="8,6"
-            BoxShadow="0 4 12 0 #40000000">
+            BoxShadow="{DynamicResource EditorShadow}">
       <StackPanel Spacing="6">
         <TextBox x:Name="InlineTextBox" Width="200" FontSize="13"
                  PlaceholderText="Type text..." />

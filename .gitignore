@@ -1,6 +1,23 @@
+# Build
 bin/
 obj/
 publish/
-*.pdf
-*.user
+
+# IDE
 .vs/
+.idea/
+.vscode/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project
+*.pdf
+
+# AppImage build artifacts
+*.AppImage
+AppDir/

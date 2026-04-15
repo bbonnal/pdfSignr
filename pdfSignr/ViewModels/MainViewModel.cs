@@ -152,26 +152,47 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
+            if (!File.Exists(path))
+            {
+                _baseStatus = $"File not found: {Path.GetFileName(path)}";
+                UpdateStatusText();
+                return;
+            }
+
+            var pdfBytes = File.ReadAllBytes(path);
+            var pageCount = PdfRenderService.GetPageCount(pdfBytes);
+
+            // Render all pages into a temp list first — if any page fails,
+            // dispose everything and don't touch the current document state.
+            var newPages = new List<PageItem>(pageCount);
+            try
+            {
+                for (int i = 0; i < pageCount; i++)
+                {
+                    var (w, h) = PdfRenderService.GetPageSize(pdfBytes, i);
+                    var bitmap = PdfRenderService.RenderPage(pdfBytes, i, RenderDpi);
+                    newPages.Add(new PageItem
+                    {
+                        Index = i, Bitmap = bitmap, WidthPt = w, HeightPt = h,
+                        Source = new PageSource(pdfBytes, i)
+                    });
+                }
+            }
+            catch
+            {
+                foreach (var p in newPages) p.DisposeResources();
+                throw;
+            }
+
+            // All pages rendered successfully — now swap state
             foreach (var page in Pages)
                 page.DisposeResources();
 
             PdfFilePath = path;
             Pages.Clear();
             SelectAnnotation(null);
-
-            var pdfBytes = File.ReadAllBytes(path);
-            var pageCount = PdfRenderService.GetPageCount(pdfBytes);
-
-            for (int i = 0; i < pageCount; i++)
-            {
-                var (w, h) = PdfRenderService.GetPageSize(pdfBytes, i);
-                var bitmap = PdfRenderService.RenderPage(pdfBytes, i, RenderDpi);
-                Pages.Add(new PageItem
-                {
-                    Index = i, Bitmap = bitmap, WidthPt = w, HeightPt = h,
-                    Source = new PageSource(pdfBytes, i)
-                });
-            }
+            foreach (var p in newPages)
+                Pages.Add(p);
 
             RenumberPages();
             _baseStatus = $"{Path.GetFileName(path)} \u2014 {pageCount} page{(pageCount != 1 ? "s" : "")}";
@@ -182,6 +203,7 @@ public partial class MainViewModel : ObservableObject
         {
             _baseStatus = $"Failed to open: {ex.Message}";
             UpdateStatusText();
+            _ = _fileDialogs.ShowErrorAsync("Failed to Open", ex.Message);
         }
     }
 
@@ -208,6 +230,7 @@ public partial class MainViewModel : ObservableObject
         {
             _baseStatus = $"Save failed: {ex.Message}";
             UpdateStatusText();
+            await _fileDialogs.ShowErrorAsync("Save Failed", ex.Message);
         }
     }
 
@@ -218,8 +241,7 @@ public partial class MainViewModel : ObservableObject
     {
         if (SelectedAnnotation == null) return;
 
-        if (SelectedAnnotation is SvgAnnotation svg)
-            svg.Dispose();
+        SelectedAnnotation.Dispose();
 
         foreach (var page in Pages)
         {
@@ -278,6 +300,7 @@ public partial class MainViewModel : ObservableObject
         {
             _baseStatus = $"Save failed: {ex.Message}";
             UpdateStatusText();
+            await _fileDialogs.ShowErrorAsync("Save Failed", ex.Message);
         }
     }
 
@@ -286,10 +309,13 @@ public partial class MainViewModel : ObservableObject
     public event Action? PageStructureChanged;
 
     [RelayCommand]
-    private void RemovePage(PageItem page)
+    private async Task RemovePage(PageItem page)
     {
         var idx = Pages.IndexOf(page);
         if (idx < 0) return;
+
+        if (!await _fileDialogs.ConfirmAsync("Remove Page", $"Remove page {page.DisplayNumber}? This cannot be undone."))
+            return;
 
         page.DisposeResources();
 
@@ -379,23 +405,42 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
+            if (!File.Exists(path))
+            {
+                _baseStatus = $"File not found: {Path.GetFileName(path)}";
+                UpdateStatusText();
+                return;
+            }
+
             var pdfBytes = File.ReadAllBytes(path);
             var pageCount = PdfRenderService.GetPageCount(pdfBytes);
 
-            for (int i = 0; i < pageCount; i++)
+            // Render all pages into a temp list first to avoid partial insertion on failure
+            var newPages = new List<PageItem>(pageCount);
+            try
             {
-                var (w, h) = PdfRenderService.GetPageSize(pdfBytes, i);
-                var bitmap = PdfRenderService.RenderPage(pdfBytes, i, RenderDpi);
-                var pageItem = new PageItem
+                for (int i = 0; i < pageCount; i++)
                 {
-                    Index = insertIndex + i,
-                    Bitmap = bitmap,
-                    WidthPt = w,
-                    HeightPt = h,
-                    Source = new PageSource(pdfBytes, i)
-                };
-                Pages.Insert(insertIndex + i, pageItem);
+                    var (w, h) = PdfRenderService.GetPageSize(pdfBytes, i);
+                    var bitmap = PdfRenderService.RenderPage(pdfBytes, i, RenderDpi);
+                    newPages.Add(new PageItem
+                    {
+                        Index = insertIndex + i,
+                        Bitmap = bitmap,
+                        WidthPt = w,
+                        HeightPt = h,
+                        Source = new PageSource(pdfBytes, i)
+                    });
+                }
             }
+            catch
+            {
+                foreach (var p in newPages) p.DisposeResources();
+                throw;
+            }
+
+            for (int i = 0; i < newPages.Count; i++)
+                Pages.Insert(insertIndex + i, newPages[i]);
 
             RenumberPages();
 
@@ -406,6 +451,7 @@ public partial class MainViewModel : ObservableObject
         {
             _baseStatus = $"Failed to insert: {ex.Message}";
             UpdateStatusText();
+            _ = _fileDialogs.ShowErrorAsync("Failed to Insert", ex.Message);
         }
     }
 
@@ -478,6 +524,7 @@ public partial class MainViewModel : ObservableObject
         {
             _baseStatus = $"{verb} failed: {ex.Message}";
             UpdateStatusText();
+            await _fileDialogs.ShowErrorAsync($"{verb} Failed", ex.Message);
         }
         finally
         {

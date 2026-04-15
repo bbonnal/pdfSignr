@@ -6,7 +6,7 @@ using pdfSignr.Services;
 
 namespace pdfSignr.Models;
 
-public abstract partial class Annotation : ObservableObject
+public abstract partial class Annotation : ObservableObject, IDisposable
 {
     [ObservableProperty] private double _x;          // PDF points from left edge
     [ObservableProperty] private double _y;          // PDF points from top edge
@@ -16,6 +16,8 @@ public abstract partial class Annotation : ObservableObject
 
     public abstract double WidthPt { get; set; }
     public abstract double HeightPt { get; set; }
+
+    public virtual void Dispose() { }
 }
 
 public partial class TextAnnotation : Annotation
@@ -74,7 +76,7 @@ public partial class TextAnnotation : Annotation
 }
 
 /// <summary>Annotation backed by an external file (SVG vector or raster PNG/JPG).</summary>
-public partial class SvgAnnotation : Annotation, IDisposable
+public partial class SvgAnnotation : Annotation
 {
     [ObservableProperty] private string _svgFilePath = "";
     [ObservableProperty] private double _scale = 1.0;
@@ -117,7 +119,7 @@ public partial class SvgAnnotation : Annotation, IDisposable
         ReplaceRenderedBitmap(bitmap, dpi);
     }
 
-    public void Dispose()
+    public override void Dispose()
     {
         RenderedBitmap?.Dispose();
         RenderedBitmap = null;

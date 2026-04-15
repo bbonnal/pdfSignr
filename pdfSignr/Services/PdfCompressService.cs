@@ -1,5 +1,4 @@
 using System.Diagnostics.CodeAnalysis;
-using System.Runtime.CompilerServices;
 using PDFtoImage;
 using PdfSharp.Drawing;
 using PdfSharp.Pdf;
@@ -10,11 +9,14 @@ using pdfSignr.Models;
 
 namespace pdfSignr.Services;
 
+/// <summary>Image resampling quality preset for PDF compression.</summary>
 public enum CompressionPreset { Screen, Ebook, Print }
 
+/// <summary>Result of a PDF compression or rasterization operation.</summary>
 public record CompressResult(long OriginalSize, long CompressedSize, int PageCount, int ImagesResampled);
 
 [SuppressMessage("Interoperability", "CA1416:Validate platform compatibility")]
+/// <summary>Compresses PDF files by resampling embedded images or rasterizing pages.</summary>
 public static class PdfCompressService
 {
     private record PresetConfig(int ResampleMaxDim, int ResampleQuality, int RasterDpi, int RasterQuality);
@@ -30,13 +32,14 @@ public static class PdfCompressService
     private static long ComputeOriginalSize(IReadOnlyList<PageSource> pageSources)
     {
         long total = 0;
-        var seen = new HashSet<int>();
+        var seen = new HashSet<byte[]>(ReferenceEqualityComparer.Instance);
         foreach (var ps in pageSources)
-            if (seen.Add(RuntimeHelpers.GetHashCode(ps.PdfBytes)))
+            if (seen.Add(ps.PdfBytes))
                 total += ps.PdfBytes.Length;
         return total;
     }
 
+    /// <summary>Compresses a PDF by resampling embedded images that exceed the preset dimensions.</summary>
     public static async Task<CompressResult> CompressAsync(
         IReadOnlyList<PageSource> pageSources,
         string outputPath,
@@ -50,7 +53,7 @@ public static class PdfCompressService
 
         var result = await Task.Run(() =>
         {
-            var sourceDocCache = new Dictionary<int, PdfDocument>();
+            var sourceDocCache = new Dictionary<byte[], PdfDocument>(ReferenceEqualityComparer.Instance);
             var outputDoc = new PdfDocument();
             outputDoc.Options.CompressContentStreams = true;
 
@@ -59,11 +62,10 @@ public static class PdfCompressService
                 foreach (var source in pageSources)
                 {
                     ct.ThrowIfCancellationRequested();
-                    var id = RuntimeHelpers.GetHashCode(source.PdfBytes);
-                    if (!sourceDocCache.TryGetValue(id, out var sourceDoc))
+                    if (!sourceDocCache.TryGetValue(source.PdfBytes, out var sourceDoc))
                     {
                         sourceDoc = PdfReader.Open(new MemoryStream(source.PdfBytes), PdfDocumentOpenMode.Import);
-                        sourceDocCache[id] = sourceDoc;
+                        sourceDocCache[source.PdfBytes] = sourceDoc;
                     }
                     outputDoc.AddPage(sourceDoc.Pages[source.SourcePageIndex]);
                 }
@@ -238,8 +240,7 @@ public static class PdfCompressService
         return SKBitmap.Decode(imageBytes);
     }
 
-    // ═══ Full-page rasterization (flatten for print) ═══
-
+    /// <summary>Rasterizes each PDF page to a JPEG image at the preset DPI, producing a flattened PDF.</summary>
     public static async Task<CompressResult> RasterizeAsync(
         IReadOnlyList<PageSource> pageSources,
         string outputPath,

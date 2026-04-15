@@ -4,9 +4,10 @@ using Svg.Skia;
 
 namespace pdfSignr.Services;
 
+/// <summary>Renders SVG and raster images for display and PDF embedding via SkiaSharp and Svg.Skia.</summary>
 public static class SvgRenderService
 {
-
+    /// <summary>Returns the intrinsic dimensions of an SVG file in PDF points.</summary>
     public static (double WidthPt, double HeightPt) GetSvgSize(string svgPath)
     {
         using var svg = new SKSvg();
@@ -17,6 +18,7 @@ public static class SvgRenderService
         return (bounds.Width * PdfConstants.SvgDpiToPoints, bounds.Height * PdfConstants.SvgDpiToPoints);
     }
 
+    /// <summary>Renders an SVG to an Avalonia bitmap at the given scale and DPI.</summary>
     public static Avalonia.Media.Imaging.Bitmap RenderForDisplay(string svgPath, double scale, int renderDpi)
     {
         var (pixelW, pixelH, svg, bounds) = PrepareRender(svgPath, scale, renderDpi);
@@ -38,6 +40,7 @@ public static class SvgRenderService
         return (widthPt, heightPt, bitmap);
     }
 
+    /// <summary>Renders an SVG to a vector PDF byte stream for embedding in saved documents.</summary>
     public static byte[] RenderToVectorPdf(string svgPath, double scale)
     {
         using var svg = new SKSvg();
@@ -61,6 +64,7 @@ public static class SvgRenderService
         return stream.ToArray();
     }
 
+    /// <summary>Returns the dimensions of a raster image (PNG/JPG) in PDF points.</summary>
     public static (double WidthPt, double HeightPt) GetImageSize(string path)
     {
         using var codec = SKCodec.Create(path);
@@ -68,6 +72,7 @@ public static class SvgRenderService
         return (codec.Info.Width * PdfConstants.SvgDpiToPoints, codec.Info.Height * PdfConstants.SvgDpiToPoints);
     }
 
+    /// <summary>Resamples a raster image to the given display dimensions and DPI.</summary>
     public static Avalonia.Media.Imaging.Bitmap ResampleForDisplay(string path, double widthPt, double heightPt, int dpi)
     {
         int pixelW = Math.Max(1, (int)(widthPt / PdfConstants.PointsPerInch * dpi));

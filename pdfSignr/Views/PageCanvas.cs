@@ -312,6 +312,13 @@ public class PageCanvas : Control
     {
         base.OnPointerReleased(e);
 
+        if (_state == State.Dragging && _target != null)
+        {
+            // Clamp annotation to page bounds so it can't be lost off-screen
+            _target.X = Math.Clamp(_target.X, 0, Math.Max(0, PageWidthPt - _target.WidthPt));
+            _target.Y = Math.Clamp(_target.Y, 0, Math.Max(0, PageHeightPt - _target.HeightPt));
+        }
+
         if (_state == State.Resizing && _target is SvgAnnotation svg)
         {
             svg.Scale = svg.OriginalWidthPt > 0 ? svg.WidthPt / svg.OriginalWidthPt : 1;

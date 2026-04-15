@@ -227,40 +227,29 @@ public partial class MainWindow : Window
         // Cancel any in-flight render — disposal happens in RerenderVisibleAsync
         _rerenderCts?.Cancel();
 
-        // Restart the debounce timer; render fires only after zooming stops
-        if (_rerenderTimer == null)
-        {
-            _rerenderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
-            _rerenderTimer.Tick += (_, _) =>
-            {
-                _rerenderTimer.Stop();
-                _ = RerenderVisibleAsync();
-            };
-        }
-        else
-        {
-            _rerenderTimer.Stop();
-        }
-        _rerenderTimer.Start();
+        RestartDebounce(ref _rerenderTimer, TimeSpan.FromMilliseconds(200),
+            () => _ = RerenderVisibleAsync());
     }
 
     private void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
     {
-        // After scrolling stops, re-render any newly visible pages that are stale
-        if (_scrollTimer == null)
+        RestartDebounce(ref _scrollTimer, TimeSpan.FromMilliseconds(200),
+            () => _ = RerenderVisibleAsync());
+    }
+
+    private static void RestartDebounce(ref DispatcherTimer? timer, TimeSpan interval, Action callback)
+    {
+        if (timer == null)
         {
-            _scrollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
-            _scrollTimer.Tick += (_, _) =>
-            {
-                _scrollTimer.Stop();
-                _ = RerenderVisibleAsync();
-            };
+            var t = new DispatcherTimer { Interval = interval };
+            t.Tick += (_, _) => { t.Stop(); callback(); };
+            timer = t;
         }
         else
         {
-            _scrollTimer.Stop();
+            timer.Stop();
         }
-        _scrollTimer.Start();
+        timer.Start();
     }
 
     private static int QuantizeDpi(int dpi)
@@ -796,7 +785,11 @@ public partial class MainWindow : Window
         }
         else if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
-            if (e.Key == Key.D0 || e.Key == Key.NumPad0)
+            if (e.Key == Key.O)
+            { ViewModel.OpenCommand.Execute(null); e.Handled = true; }
+            else if (e.Key == Key.S)
+            { if (ViewModel.SaveCommand.CanExecute(null)) ViewModel.SaveCommand.Execute(null); e.Handled = true; }
+            else if (e.Key == Key.D0 || e.Key == Key.NumPad0)
             { FitToWidth(); e.Handled = true; }
             else if (e.Key == Key.OemPlus || e.Key == Key.Add)
             { ApplyZoom(Math.Clamp(_zoom + ZoomStep, MinZoom, MaxZoom)); e.Handled = true; }

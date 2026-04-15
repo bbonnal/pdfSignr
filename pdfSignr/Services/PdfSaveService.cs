@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using PdfSharp.Drawing;
 using PdfSharp.Pdf;
 using PdfSharp.Pdf.IO;
@@ -6,8 +5,10 @@ using pdfSignr.Models;
 
 namespace pdfSignr.Services;
 
+/// <summary>Saves annotated PDF pages to disk using PDFsharp, embedding text and image annotations.</summary>
 public static class PdfSaveService
 {
+    /// <summary>Saves a single page with its annotations to a new PDF file.</summary>
     public static void SaveSinglePage(
         string outputPath,
         PageSource source,
@@ -16,11 +17,12 @@ public static class PdfSaveService
         Save(outputPath, [(source, annotations)]);
     }
 
+    /// <summary>Saves multiple pages with annotations to a new PDF file.</summary>
     public static void Save(
         string outputPath,
         IEnumerable<(PageSource Source, IEnumerable<Annotation> Annotations)> pages)
     {
-        var sourceDocCache = new Dictionary<byte[], PdfDocument>(ReferenceEqualityComparer.Instance);
+        var sourceDocCache = new Dictionary<byte[], PdfDocument>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         var fileCache = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
         var outputDoc = new PdfDocument();
 
@@ -64,14 +66,6 @@ public static class PdfSaveService
             foreach (var doc in sourceDocCache.Values)
                 doc.Dispose();
         }
-    }
-
-    /// <summary>Equality comparer that uses reference identity for byte arrays.</summary>
-    private sealed class ReferenceEqualityComparer : IEqualityComparer<byte[]>
-    {
-        public static readonly ReferenceEqualityComparer Instance = new();
-        public bool Equals(byte[]? x, byte[]? y) => ReferenceEquals(x, y);
-        public int GetHashCode(byte[] obj) => RuntimeHelpers.GetHashCode(obj);
     }
 
     private static void WithRotation(XGraphics gfx, Annotation ann, Action draw)
