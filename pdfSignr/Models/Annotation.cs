@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -23,7 +24,7 @@ public abstract partial class Annotation : ObservableObject, IDisposable
 public partial class TextAnnotation : Annotation
 {
     [ObservableProperty] private string _text = "Text";
-    [ObservableProperty] private string _fontFamily = "Helvetica";
+    [ObservableProperty] private string _fontFamily = FontResolver.PdfFontNames[0];
     private double _widthPt = 40;
     private double _heightPt = 18;
     private double? _cachedFontSize;
@@ -51,7 +52,7 @@ public partial class TextAnnotation : Annotation
     }
 
     // Shared cache — also used by PageCanvas.MakeFormattedText
-    internal static readonly Dictionary<string, Typeface> TypefaceCache = new();
+    internal static readonly ConcurrentDictionary<string, Typeface> TypefaceCache = new();
 
     private double ComputeFontSize()
     {
@@ -59,11 +60,8 @@ public partial class TextAnnotation : Annotation
         // Measure text at a reference size to find the ratio
         const double refSize = 72.0;
         double dpiScale = PdfConstants.DpiScale;
-        if (!TypefaceCache.TryGetValue(FontFamily, out var typeface))
-        {
-            typeface = new Typeface(MapFontForMeasure(FontFamily));
-            TypefaceCache[FontFamily] = typeface;
-        }
+        var typeface = TypefaceCache.GetOrAdd(FontFamily,
+            ff => new Typeface(MapFontForMeasure(ff)));
         var ft = new FormattedText("Xg", CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight, typeface, refSize * dpiScale, Brushes.Black);
         double measuredHeightPt = ft.Height / dpiScale;

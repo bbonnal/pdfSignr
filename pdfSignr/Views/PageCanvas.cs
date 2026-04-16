@@ -9,7 +9,6 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using pdfSignr.Models;
-using pdfSignr.ViewModels;
 
 namespace pdfSignr.Views;
 
@@ -33,7 +32,7 @@ public class AnnotationSelectedEventArgs(RoutedEvent routedEvent, Annotation? an
 
 public class PageCanvas : Control
 {
-    private const double Scale = MainViewModel.DpiScale;
+    private const double Scale = PdfConstants.DpiScale;
     private const double HandleRadius = 5;
     private const double HandleHit = 10;
     private const double RotateDistance = 28;
@@ -322,7 +321,7 @@ public class PageCanvas : Control
         if (_state == State.Resizing && _target is SvgAnnotation svg)
         {
             svg.Scale = svg.OriginalWidthPt > 0 ? svg.WidthPt / svg.OriginalWidthPt : 1;
-            svg.ReRender(MainViewModel.RenderDpi);
+            svg.ReRender(PdfConstants.RenderDpi);
         }
 
         _state = State.Idle;
@@ -517,11 +516,8 @@ public class PageCanvas : Control
 
     private static FormattedText MakeFormattedText(TextAnnotation t)
     {
-        if (!TextAnnotation.TypefaceCache.TryGetValue(t.FontFamily, out var typeface))
-        {
-            typeface = new Typeface(TextAnnotation.MapFontForMeasure(t.FontFamily));
-            TextAnnotation.TypefaceCache[t.FontFamily] = typeface;
-        }
+        var typeface = TextAnnotation.TypefaceCache.GetOrAdd(t.FontFamily,
+            ff => new Typeface(TextAnnotation.MapFontForMeasure(ff)));
         return new FormattedText(
             t.Text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
             typeface, t.FontSize * Scale, Brushes.Black);

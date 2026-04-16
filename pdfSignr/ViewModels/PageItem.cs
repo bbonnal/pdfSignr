@@ -19,12 +19,19 @@ public partial class PageItem : ObservableObject
     public PageSource Source { get; init; } = null!;
     public ObservableCollection<Annotation> Annotations { get; } = new();
 
+    public void ReplaceBitmap(Bitmap? newBitmap)
+    {
+        var old = Bitmap;
+        Bitmap = newBitmap;
+        old?.Dispose();
+    }
+
     public void DisposeResources()
     {
         Bitmap?.Dispose();
         Bitmap = null;
         foreach (var ann in Annotations)
-            if (ann is SvgAnnotation svg)
-                svg.Dispose();
+            ann.Dispose();
+        Annotations.Clear();
     }
 }

@@ -26,11 +26,12 @@ public partial class MainWindow : Window
     private TextAnnotation? _editingText;
     private double _zoom = 1.0;
     private double _screenScaling = 1.0;
-    private int _targetDpi = MainViewModel.RenderDpi;
-    private readonly Dictionary<int, int> _pageDpi = new(); // page index → DPI last rendered at
+    private int _targetDpi = PdfConstants.RenderDpi;
+    private readonly Dictionary<PageItem, int> _pageDpi = new(); // page → DPI last rendered at
     private DispatcherTimer? _rerenderTimer;
     private DispatcherTimer? _scrollTimer;
     private CancellationTokenSource? _rerenderCts;
+    private CancellationTokenSource? _backgroundLoadCts;
 
     // Page drag-to-reorder state
     private const double DragThreshold = 8;
@@ -112,6 +113,9 @@ public partial class MainWindow : Window
         _rerenderCts?.Cancel();
         _rerenderCts?.Dispose();
         _rerenderCts = null;
+        _backgroundLoadCts?.Cancel();
+        _backgroundLoadCts?.Dispose();
+        _backgroundLoadCts = null;
         HideTextEditor();
         base.OnClosed(e);
     }
@@ -128,16 +132,10 @@ public partial class MainWindow : Window
 
     private void OnPageStructureChanged()
     {
-        // Rebuild _pageDpi since indices shifted after page removal/reorder
-        var rebuilt = new Dictionary<int, int>();
-        foreach (var page in ViewModel.Pages)
-        {
-            if (_pageDpi.TryGetValue(page.Index, out var dpi))
-                rebuilt[page.Index] = dpi;
-        }
-        _pageDpi.Clear();
-        foreach (var (k, v) in rebuilt)
-            _pageDpi[k] = v;
+        // Remove entries for pages no longer in the document
+        var current = new HashSet<PageItem>(ViewModel.Pages);
+        foreach (var key in _pageDpi.Keys.Where(k => !current.Contains(k)).ToList())
+            _pageDpi.Remove(key);
     }
 
     // ═══ Zoom ═══
@@ -200,7 +198,7 @@ public partial class MainWindow : Window
         if (available <= 0) return;
 
         // Total layout width = page + both arrow columns; all scale together with zoom
-        double pageScreenWidth = ViewModel.Pages[0].WidthPt * MainViewModel.DpiScale;
+        double pageScreenWidth = ViewModel.Pages[0].WidthPt * PdfConstants.DpiScale;
         double totalLayoutWidth = pageScreenWidth + 2 * ArrowColumnLayoutWidth;
         if (totalLayoutWidth <= 0) return;
 
@@ -220,7 +218,7 @@ public partial class MainWindow : Window
 
     private void ScheduleRerender()
     {
-        int dpi = QuantizeDpi((int)(MainViewModel.RenderDpi * _zoom * _screenScaling));
+        int dpi = QuantizeDpi((int)(PdfConstants.RenderDpi * _zoom * _screenScaling));
         if (dpi == _targetDpi) return;
         _targetDpi = dpi;
 
@@ -310,7 +308,7 @@ public partial class MainWindow : Window
         // Re-render pages that are visible AND not already at the target DPI
         var pagesToRender = ViewModel.Pages
             .Where(p => visible.Contains(p.Index)
-                     && (!_pageDpi.TryGetValue(p.Index, out var cur) || cur != dpi))
+                     && (!_pageDpi.TryGetValue(p, out var cur) || cur != dpi))
             .Select(p => (Page: p, p.Source.PdfBytes, p.Source.SourcePageIndex))
             .ToList();
 
@@ -331,10 +329,8 @@ public partial class MainWindow : Window
                     return;
                 }
 
-                var old = page.Bitmap;
-                page.Bitmap = bitmap;
-                old?.Dispose();
-                _pageDpi[page.Index] = dpi;
+                page.ReplaceBitmap(bitmap);
+                _pageDpi[page] = dpi;
             }
             catch (OperationCanceledException) { }
         });
@@ -439,8 +435,8 @@ public partial class MainWindow : Window
     {
         if (_editingText == null) return;
 
-        double annScreenX = _editingText.X * MainViewModel.DpiScale;
-        double annScreenBottom = (_editingText.Y + _editingText.HeightPt) * MainViewModel.DpiScale + 8;
+        double annScreenX = _editingText.X * PdfConstants.DpiScale;
+        double annScreenBottom = (_editingText.Y + _editingText.HeightPt) * PdfConstants.DpiScale + 8;
 
         // Find the PageCanvas hosting this annotation
         var canvas = FindCanvasForAnnotation(_editingText);
@@ -754,14 +750,50 @@ public partial class MainWindow : Window
 
     private void OnPdfLoaded()
     {
-        // Pages arrive fully rendered at RenderDpi
+        _backgroundLoadCts?.Cancel();
         _pageDpi.Clear();
-        _targetDpi = MainViewModel.RenderDpi;
-        foreach (var page in ViewModel.Pages)
-            _pageDpi[page.Index] = MainViewModel.RenderDpi;
+        _targetDpi = PdfConstants.RenderDpi;
 
-        // Delay until layout has completed so FitToWidth can measure page widths
-        Dispatcher.UIThread.Post(FitToWidth, DispatcherPriority.Background);
+        // Pages arrive with null bitmaps — render visible pages first, then the rest
+        Dispatcher.UIThread.Post(async () =>
+        {
+            FitToWidth();
+            await RerenderVisibleAsync();
+            _ = RenderRemainingPagesAsync();
+        }, DispatcherPriority.Background);
+    }
+
+    private async Task RenderRemainingPagesAsync()
+    {
+        _backgroundLoadCts?.Cancel();
+        _backgroundLoadCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _backgroundLoadCts = cts;
+
+        int dpi = _targetDpi;
+        var unrendered = ViewModel.Pages
+            .Where(p => !_pageDpi.ContainsKey(p))
+            .ToList();
+
+        foreach (var page in unrendered)
+        {
+            if (cts.Token.IsCancellationRequested) return;
+            if (_pageDpi.ContainsKey(page)) continue;
+
+            try
+            {
+                var bitmap = await Task.Run(
+                    () => PdfRenderService.RenderPage(
+                        page.Source.PdfBytes, page.Source.SourcePageIndex, dpi),
+                    cts.Token);
+
+                if (cts.Token.IsCancellationRequested) { bitmap.Dispose(); return; }
+
+                page.ReplaceBitmap(bitmap);
+                _pageDpi[page] = dpi;
+            }
+            catch (OperationCanceledException) { return; }
+        }
     }
 
     // ═══ Keyboard ═══

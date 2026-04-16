@@ -12,9 +12,6 @@ namespace pdfSignr.ViewModels;
 
 public partial class MainViewModel : ObservableObject
 {
-    public const int RenderDpi = PdfConstants.RenderDpi;
-    public const double DpiScale = PdfConstants.DpiScale;
-
     private readonly IFileDialogService _fileDialogs;
 
     [ObservableProperty] private string? _pdfFilePath;
@@ -22,6 +19,11 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private Annotation? _selectedAnnotation;
     [ObservableProperty] private ToolMode _currentTool = ToolMode.Select;
     private string _baseStatus = "Open a PDF to get started";
+    private string BaseStatus
+    {
+        get => _baseStatus;
+        set { _baseStatus = value; UpdateStatusText(); }
+    }
     [ObservableProperty] private string _statusText = "Open a PDF to get started";
     [ObservableProperty] private string? _signatureSvgPath;
     [ObservableProperty] private bool _isDraggingFile;
@@ -164,23 +166,14 @@ public partial class MainViewModel : ObservableObject
         {
             if (!File.Exists(path))
             {
-                _baseStatus = $"File not found: {Path.GetFileName(path)}";
-                UpdateStatusText();
+                BaseStatus = $"File not found: {Path.GetFileName(path)}";
                 return;
             }
 
             var fileName = Path.GetFileName(path);
-            _baseStatus = $"Opening {fileName}\u2026";
-            UpdateStatusText();
+            BaseStatus = $"Opening {fileName}\u2026";
 
-            // All heavy work on the thread pool: read file, get sizes, render every page
-            var progress = new Progress<int>(pct =>
-            {
-                _baseStatus = $"Opening {fileName}\u2026 {pct}%";
-                UpdateStatusText();
-            });
-
-            var newPages = await Task.Run(() => LoadPdfCore(path, progress));
+            var newPages = await Task.Run(() => LoadPdfCore(path));
 
             // Dispose old pages, then swap the entire collection in one shot
             foreach (var page in Pages)
@@ -190,49 +183,46 @@ public partial class MainViewModel : ObservableObject
             SelectAnnotation(null);
             Pages = newPages;
 
-            _baseStatus = $"{fileName} \u2014 {newPages.Count} page{(newPages.Count != 1 ? "s" : "")}";
-            UpdateStatusText();
+            BaseStatus = $"{fileName} \u2014 {newPages.Count} page{(newPages.Count != 1 ? "s" : "")}";
             PdfLoaded?.Invoke();
         }
         catch (Exception ex)
         {
-            _baseStatus = $"Failed to open: {ex.Message}";
-            UpdateStatusText();
+            BaseStatus = $"Failed to open: {ex.Message}";
             _ = _fileDialogs.ShowErrorAsync("Failed to Open", ex.Message);
         }
     }
 
-    private static ObservableCollection<PageItem> LoadPdfCore(string path, IProgress<int> progress)
+    private static PageItem[] CreatePageItems(byte[] pdfBytes, int startIndex = 0)
     {
-        var pdfBytes = File.ReadAllBytes(path);
         var sizes = PdfRenderService.GetAllPageSizes(pdfBytes);
         int count = sizes.Count;
 
-        // Pre-allocate items with metadata (fast)
         var items = new PageItem[count];
         for (int i = 0; i < count; i++)
         {
             var (w, h) = sizes[i];
             items[i] = new PageItem
             {
-                Index = i, DisplayNumber = i + 1,
-                IsFirst = i == 0, IsLast = i == count - 1,
+                Index = startIndex + i,
                 Bitmap = null, WidthPt = w, HeightPt = h,
                 Source = new PageSource(pdfBytes, i)
             };
         }
+        return items;
+    }
 
-        // Render all pages in parallel across available cores
-        int done = 0;
-        Parallel.For(0, count, i =>
+    private static ObservableCollection<PageItem> LoadPdfCore(string path)
+    {
+        var items = CreatePageItems(File.ReadAllBytes(path));
+        int count = items.Length;
+        for (int i = 0; i < count; i++)
         {
-            items[i].Bitmap = PdfRenderService.RenderPage(pdfBytes, i, RenderDpi);
-            var pct = Interlocked.Increment(ref done) * 100 / count;
-            progress.Report(pct);
-        });
-
-        var collection = new ObservableCollection<PageItem>(items);
-        return collection;
+            items[i].DisplayNumber = i + 1;
+            items[i].IsFirst = i == 0;
+            items[i].IsLast = i == count - 1;
+        }
+        return new ObservableCollection<PageItem>(items);
     }
 
     [RelayCommand(CanExecute = nameof(CanSave))]
@@ -251,13 +241,11 @@ public partial class MainViewModel : ObservableObject
         try
         {
             PdfSaveService.Save(outputPath, pagesWithAnnotations);
-            _baseStatus = $"Saved to {Path.GetFileName(outputPath)}";
-            UpdateStatusText();
+            BaseStatus = $"Saved to {Path.GetFileName(outputPath)}";
         }
         catch (Exception ex)
         {
-            _baseStatus = $"Save failed: {ex.Message}";
-            UpdateStatusText();
+            BaseStatus = $"Save failed: {ex.Message}";
             await _fileDialogs.ShowErrorAsync("Save Failed", ex.Message);
         }
     }
@@ -321,13 +309,11 @@ public partial class MainViewModel : ObservableObject
         try
         {
             PdfSaveService.SaveSinglePage(outputPath, page.Source, page.Annotations);
-            _baseStatus = $"Page {page.Index + 1} saved to {Path.GetFileName(outputPath)}";
-            UpdateStatusText();
+            BaseStatus = $"Page {page.Index + 1} saved to {Path.GetFileName(outputPath)}";
         }
         catch (Exception ex)
         {
-            _baseStatus = $"Save failed: {ex.Message}";
-            UpdateStatusText();
+            BaseStatus = $"Save failed: {ex.Message}";
             await _fileDialogs.ShowErrorAsync("Save Failed", ex.Message);
         }
     }
@@ -355,8 +341,7 @@ public partial class MainViewModel : ObservableObject
         if (Pages.Count == 0)
         {
             PdfFilePath = null;
-            _baseStatus = "Open a PDF to get started";
-            UpdateStatusText();
+            BaseStatus = "Open a PDF to get started";
         }
         else
         {
@@ -403,8 +388,7 @@ public partial class MainViewModel : ObservableObject
     private void UpdatePageCount()
     {
         var name = PdfFilePath != null ? Path.GetFileName(PdfFilePath) : "Document";
-        _baseStatus = $"{name} \u2014 {Pages.Count} page{(Pages.Count != 1 ? "s" : "")}";
-        UpdateStatusText();
+        BaseStatus = $"{name} \u2014 {Pages.Count} page{(Pages.Count != 1 ? "s" : "")}";
     }
 
     // --- Page interleaving ---
@@ -435,38 +419,13 @@ public partial class MainViewModel : ObservableObject
         {
             if (!File.Exists(path))
             {
-                _baseStatus = $"File not found: {Path.GetFileName(path)}";
-                UpdateStatusText();
+                BaseStatus = $"File not found: {Path.GetFileName(path)}";
                 return;
             }
 
             // All heavy work on the thread pool
             var newPages = await Task.Run(() =>
-            {
-                var pdfBytes = File.ReadAllBytes(path);
-                var sizes = PdfRenderService.GetAllPageSizes(pdfBytes);
-                int count = sizes.Count;
-
-                var items = new PageItem[count];
-                for (int i = 0; i < count; i++)
-                {
-                    var (w, h) = sizes[i];
-                    items[i] = new PageItem
-                    {
-                        Index = insertIndex + i,
-                        Bitmap = null,
-                        WidthPt = w, HeightPt = h,
-                        Source = new PageSource(pdfBytes, i)
-                    };
-                }
-
-                Parallel.For(0, count, i =>
-                {
-                    items[i].Bitmap = PdfRenderService.RenderPage(pdfBytes, i, RenderDpi);
-                });
-
-                return items;
-            });
+                CreatePageItems(File.ReadAllBytes(path), insertIndex));
 
             for (int i = 0; i < newPages.Length; i++)
                 Pages.Insert(insertIndex + i, newPages[i]);
@@ -478,8 +437,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            _baseStatus = $"Failed to insert: {ex.Message}";
-            UpdateStatusText();
+            BaseStatus = $"Failed to insert: {ex.Message}";
             _ = _fileDialogs.ShowErrorAsync("Failed to Insert", ex.Message);
         }
     }
@@ -517,16 +475,14 @@ public partial class MainViewModel : ObservableObject
 
         IsCompressing = true;
         var verb = rasterize ? "Rasterizing" : "Compressing";
-        _baseStatus = $"{verb}\u2026";
-        UpdateStatusText();
+        BaseStatus = $"{verb}\u2026";
 
         try
         {
             var pageSources = Pages.Select(p => p.Source).ToList();
             var progress = new Progress<int>(p =>
             {
-                _baseStatus = $"{verb}\u2026 {p}%";
-                UpdateStatusText();
+                BaseStatus = $"{verb}\u2026 {p}%";
             });
 
             var result = rasterize
@@ -536,23 +492,21 @@ public partial class MainViewModel : ObservableObject
             var saved = result.OriginalSize - result.CompressedSize;
             if (rasterize)
             {
-                _baseStatus = $"Rasterized: {FormatSize(result.OriginalSize)} \u2192 {FormatSize(result.CompressedSize)}";
+                BaseStatus = $"Rasterized: {FormatSize(result.OriginalSize)} \u2192 {FormatSize(result.CompressedSize)}";
             }
             else
             {
                 var imgNote = result.ImagesResampled > 0
                     ? $", {result.ImagesResampled} image{(result.ImagesResampled != 1 ? "s" : "")} resampled"
                     : ", no images to resample";
-                _baseStatus = saved > 0
+                BaseStatus = saved > 0
                     ? $"Compressed: {FormatSize(result.OriginalSize)} \u2192 {FormatSize(result.CompressedSize)} ({(double)saved / result.OriginalSize * 100:F0}% smaller{imgNote})"
                     : $"Compressed: {FormatSize(result.CompressedSize)} (no reduction{imgNote})";
             }
-            UpdateStatusText();
         }
         catch (Exception ex)
         {
-            _baseStatus = $"{verb} failed: {ex.Message}";
-            UpdateStatusText();
+            BaseStatus = $"{verb} failed: {ex.Message}";
             await _fileDialogs.ShowErrorAsync($"{verb} Failed", ex.Message);
         }
         finally
@@ -574,13 +528,17 @@ public partial class MainViewModel : ObservableObject
     {
         if (pageIndex < 0 || pageIndex >= Pages.Count) return;
 
+        var page = Pages[pageIndex];
+
         if (CurrentTool == ToolMode.Text)
         {
             const double w = 50, h = 18;
             var annotation = new TextAnnotation
             {
-                X = pdfX - w / 2, Y = pdfY - h / 2, PageIndex = pageIndex,
-                Text = "Text", FontFamily = "Helvetica",
+                X = Math.Clamp(pdfX - w / 2, 0, Math.Max(0, page.WidthPt - w)),
+                Y = Math.Clamp(pdfY - h / 2, 0, Math.Max(0, page.HeightPt - h)),
+                PageIndex = pageIndex,
+                Text = "Text", FontFamily = FontResolver.PdfFontNames[0],
                 HeightPt = h, WidthPt = w
             };
             Pages[pageIndex].Annotations.Add(annotation);
@@ -601,19 +559,21 @@ public partial class MainViewModel : ObservableObject
             }
             else
             {
-                (baseW, baseH, bitmap) = SvgRenderService.GetSizeAndRenderForDisplay(SignatureSvgPath, 1.0, RenderDpi);
+                (baseW, baseH, bitmap) = SvgRenderService.GetSizeAndRenderForDisplay(SignatureSvgPath, 1.0, PdfConstants.RenderDpi);
             }
 
             var annotation = new SvgAnnotation
             {
-                X = pdfX - baseW / 2, Y = pdfY - baseH / 2, PageIndex = pageIndex,
+                X = Math.Clamp(pdfX - baseW / 2, 0, Math.Max(0, page.WidthPt - baseW)),
+                Y = Math.Clamp(pdfY - baseH / 2, 0, Math.Max(0, page.HeightPt - baseH)),
+                PageIndex = pageIndex,
                 SvgFilePath = SignatureSvgPath,
                 IsRaster = isRaster,
                 Scale = 1.0,
                 OriginalWidthPt = baseW, OriginalHeightPt = baseH,
                 WidthPt = baseW, HeightPt = baseH,
                 RenderedBitmap = bitmap,
-                RenderedDpi = RenderDpi
+                RenderedDpi = PdfConstants.RenderDpi
             };
             Pages[pageIndex].Annotations.Add(annotation);
             SelectAnnotation(annotation);

@@ -254,7 +254,7 @@ public static class PdfCompressService
 
         var result = await Task.Run(() =>
         {
-            var doc = new PdfDocument();
+            using var doc = new PdfDocument();
             doc.Options.CompressContentStreams = true;
 
             for (int i = 0; i < pageSources.Count; i++)
@@ -282,7 +282,6 @@ public static class PdfCompressService
             }
 
             doc.Save(outputPath);
-            doc.Dispose();
 
             var compressedSize = new FileInfo(outputPath).Length;
             return new CompressResult(originalSize, compressedSize, pageSources.Count, 0);
