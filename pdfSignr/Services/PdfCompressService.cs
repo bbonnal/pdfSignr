@@ -29,11 +29,11 @@ public static class PdfCompressService
         _                        => new(1600, 65, 150, 70),
     };
 
-    private static long ComputeOriginalSize(IReadOnlyList<PageSource> pageSources)
+    private static long ComputeOriginalSize(IReadOnlyList<(PageSource Source, int RotationDegrees)> pageSources)
     {
         long total = 0;
         var seen = new HashSet<byte[]>(ReferenceEqualityComparer.Instance);
-        foreach (var ps in pageSources)
+        foreach (var (ps, _) in pageSources)
             if (seen.Add(ps.PdfBytes))
                 total += ps.PdfBytes.Length;
         return total;
@@ -41,7 +41,7 @@ public static class PdfCompressService
 
     /// <summary>Compresses a PDF by resampling embedded images that exceed the preset dimensions.</summary>
     public static async Task<CompressResult> CompressAsync(
-        IReadOnlyList<PageSource> pageSources,
+        IReadOnlyList<(PageSource Source, int RotationDegrees)> pageSources,
         string outputPath,
         CompressionPreset preset,
         IProgress<int>? progress = null,
@@ -59,7 +59,7 @@ public static class PdfCompressService
 
             try
             {
-                foreach (var source in pageSources)
+                foreach (var (source, rotDeg) in pageSources)
                 {
                     ct.ThrowIfCancellationRequested();
                     if (!sourceDocCache.TryGetValue(source.PdfBytes, out var sourceDoc))
@@ -67,7 +67,9 @@ public static class PdfCompressService
                         sourceDoc = PdfReader.Open(new MemoryStream(source.PdfBytes), PdfDocumentOpenMode.Import);
                         sourceDocCache[source.PdfBytes] = sourceDoc;
                     }
-                    outputDoc.AddPage(sourceDoc.Pages[source.SourcePageIndex]);
+                    var page = outputDoc.AddPage(sourceDoc.Pages[source.SourcePageIndex]);
+                    if (rotDeg != 0)
+                        page.Rotate = (page.Rotate + rotDeg) % 360;
                 }
 
                 // Now walk all objects and resample images
@@ -242,7 +244,7 @@ public static class PdfCompressService
 
     /// <summary>Rasterizes each PDF page to a JPEG image at the preset DPI, producing a flattened PDF.</summary>
     public static async Task<CompressResult> RasterizeAsync(
-        IReadOnlyList<PageSource> pageSources,
+        IReadOnlyList<(PageSource Source, int RotationDegrees)> pageSources,
         string outputPath,
         CompressionPreset preset,
         IProgress<int>? progress = null,
@@ -261,22 +263,33 @@ public static class PdfCompressService
             {
                 ct.ThrowIfCancellationRequested();
 
-                var source = pageSources[i];
+                var (source, rotDeg) = pageSources[i];
                 var (widthPt, heightPt) = PdfRenderService.GetPageSize(source.PdfBytes, source.SourcePageIndex);
 
+                // Apply rotation to dimensions and rendering
+                var rotation = rotDeg switch
+                {
+                    90  => PdfRotation.Rotate90,
+                    180 => PdfRotation.Rotate180,
+                    270 => PdfRotation.Rotate270,
+                    _   => PdfRotation.Rotate0
+                };
+                double effectiveW = rotDeg is 90 or 270 ? heightPt : widthPt;
+                double effectiveH = rotDeg is 90 or 270 ? widthPt : heightPt;
+
                 using var skBitmap = Conversion.ToImage(
-                    source.PdfBytes, page: source.SourcePageIndex, options: new(Dpi: dpi));
+                    source.PdfBytes, page: source.SourcePageIndex, options: new(Dpi: dpi, Rotation: rotation));
                 using var jpegData = skBitmap.Encode(SKEncodedImageFormat.Jpeg, jpegQuality);
                 var jpegBytes = jpegData.ToArray();
 
                 var page = doc.AddPage();
-                page.Width = XUnitPt.FromPoint(widthPt);
-                page.Height = XUnitPt.FromPoint(heightPt);
+                page.Width = XUnitPt.FromPoint(effectiveW);
+                page.Height = XUnitPt.FromPoint(effectiveH);
 
                 using var imgStream = new MemoryStream(jpegBytes);
                 using var xImage = XImage.FromStream(imgStream);
                 using var gfx = XGraphics.FromPdfPage(page);
-                gfx.DrawImage(xImage, 0, 0, widthPt, heightPt);
+                gfx.DrawImage(xImage, 0, 0, effectiveW, effectiveH);
 
                 progress?.Report((i + 1) * 100 / pageSources.Count);
             }

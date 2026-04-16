@@ -28,6 +28,25 @@ public class AnnotationSelectedEventArgs(RoutedEvent routedEvent, Annotation? an
     public Annotation? Annotation { get; } = annotation;
 }
 
+public class AnnotationManipulatedEventArgs(
+    RoutedEvent routedEvent, Annotation annotation,
+    double oldX, double oldY, double oldW, double oldH, double oldRot,
+    double newX, double newY, double newW, double newH, double newRot)
+    : RoutedEventArgs(routedEvent)
+{
+    public Annotation Annotation { get; } = annotation;
+    public double OldX { get; } = oldX;
+    public double OldY { get; } = oldY;
+    public double OldW { get; } = oldW;
+    public double OldH { get; } = oldH;
+    public double OldRot { get; } = oldRot;
+    public double NewX { get; } = newX;
+    public double NewY { get; } = newY;
+    public double NewW { get; } = newW;
+    public double NewH { get; } = newH;
+    public double NewRot { get; } = newRot;
+}
+
 // --- PageCanvas ---
 
 public class PageCanvas : Control
@@ -71,6 +90,8 @@ public class PageCanvas : Control
         RoutedEvent.Register<PageCanvas, AnnotationSelectedEventArgs>(nameof(AnnotationSelected), RoutingStrategies.Bubble);
     public static readonly RoutedEvent<RoutedEventArgs> DeleteRequestedEvent =
         RoutedEvent.Register<PageCanvas, RoutedEventArgs>(nameof(DeleteRequested), RoutingStrategies.Bubble);
+    public static readonly RoutedEvent<AnnotationManipulatedEventArgs> AnnotationManipulatedEvent =
+        RoutedEvent.Register<PageCanvas, AnnotationManipulatedEventArgs>(nameof(AnnotationManipulated), RoutingStrategies.Bubble);
 
     public event EventHandler<CanvasClickedEventArgs> CanvasClicked
     { add => AddHandler(CanvasClickedEvent, value); remove => RemoveHandler(CanvasClickedEvent, value); }
@@ -78,6 +99,8 @@ public class PageCanvas : Control
     { add => AddHandler(AnnotationSelectedEvent, value); remove => RemoveHandler(AnnotationSelectedEvent, value); }
     public event EventHandler<RoutedEventArgs> DeleteRequested
     { add => AddHandler(DeleteRequestedEvent, value); remove => RemoveHandler(DeleteRequestedEvent, value); }
+    public event EventHandler<AnnotationManipulatedEventArgs> AnnotationManipulated
+    { add => AddHandler(AnnotationManipulatedEvent, value); remove => RemoveHandler(AnnotationManipulatedEvent, value); }
 
     // Styled properties
     public static readonly StyledProperty<Bitmap?> PageBitmapProperty =
@@ -322,6 +345,21 @@ public class PageCanvas : Control
         {
             svg.Scale = svg.OriginalWidthPt > 0 ? svg.WidthPt / svg.OriginalWidthPt : 1;
             svg.ReRender(PdfConstants.RenderDpi);
+        }
+
+        // Raise manipulation event if annotation properties changed
+        if (_target != null && _state != State.Idle)
+        {
+            bool changed = _target.X != _startX || _target.Y != _startY
+                        || _target.WidthPt != _startW || _target.HeightPt != _startH
+                        || _target.Rotation != _startRot;
+            if (changed)
+            {
+                RaiseEvent(new AnnotationManipulatedEventArgs(
+                    AnnotationManipulatedEvent, _target,
+                    _startX, _startY, _startW, _startH, _startRot,
+                    _target.X, _target.Y, _target.WidthPt, _target.HeightPt, _target.Rotation));
+            }
         }
 
         _state = State.Idle;

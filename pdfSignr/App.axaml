@@ -24,17 +24,12 @@
                     <SolidColorBrush x:Key="SystemControlHighlightListMediumBrush" Color="#3E3E3E" />
                     <SolidColorBrush x:Key="ToggleCheckedBrush" Color="#3D4F6A" />
                     <SolidColorBrush x:Key="ToggleCheckedHoverBrush" Color="#4A5E7A" />
-                    <SolidColorBrush x:Key="ReorderBtnBrush" Color="#80000000" />
-                    <SolidColorBrush x:Key="ReorderBtnHoverBrush" Color="#A0000000" />
                     <!-- Icons -->
                     <SolidColorBrush x:Key="IconForeground" Color="#888888" />
                     <SolidColorBrush x:Key="IconForegroundMuted" Color="#AAAAAA" />
-                    <SolidColorBrush x:Key="IconForegroundBright" Color="#DDDDDD" />
                     <!-- Accent -->
                     <SolidColorBrush x:Key="AccentBrush" Color="#3B82F6" />
                     <SolidColorBrush x:Key="AccentOverlayBrush" Color="#303B82F6" />
-                    <!-- Semantic -->
-                    <SolidColorBrush x:Key="DangerForeground" Color="#CC4444" />
                     <SolidColorBrush x:Key="PageSurfaceBrush" Color="White" />
                     <SolidColorBrush x:Key="PageNumberBadgeBrush" Color="#80000000" />
                     <SolidColorBrush x:Key="PageNumberForeground" Color="White" />
@@ -54,17 +49,12 @@
                     <SolidColorBrush x:Key="SystemControlHighlightListMediumBrush" Color="#DBDBDB" />
                     <SolidColorBrush x:Key="ToggleCheckedBrush" Color="#C5D4E8" />
                     <SolidColorBrush x:Key="ToggleCheckedHoverBrush" Color="#B0C4DE" />
-                    <SolidColorBrush x:Key="ReorderBtnBrush" Color="#40000000" />
-                    <SolidColorBrush x:Key="ReorderBtnHoverBrush" Color="#60000000" />
                     <!-- Icons -->
                     <SolidColorBrush x:Key="IconForeground" Color="#666666" />
                     <SolidColorBrush x:Key="IconForegroundMuted" Color="#888888" />
-                    <SolidColorBrush x:Key="IconForegroundBright" Color="#444444" />
                     <!-- Accent -->
                     <SolidColorBrush x:Key="AccentBrush" Color="#2563EB" />
                     <SolidColorBrush x:Key="AccentOverlayBrush" Color="#302563EB" />
-                    <!-- Semantic -->
-                    <SolidColorBrush x:Key="DangerForeground" Color="#DC2626" />
                     <SolidColorBrush x:Key="PageSurfaceBrush" Color="White" />
                     <SolidColorBrush x:Key="PageNumberBadgeBrush" Color="#80000000" />
                     <SolidColorBrush x:Key="PageNumberForeground" Color="White" />
@@ -154,32 +144,13 @@
             <Setter Property="Background" Value="{DynamicResource SystemControlHighlightListLowBrush}" />
         </Style>
 
-        <!-- ═══ Reorder-page button ═══ -->
-        <Style Selector="Button.reorder-btn">
-            <Setter Property="Width" Value="28" />
-            <Setter Property="Height" Value="28" />
-            <Setter Property="Padding" Value="0" />
-            <Setter Property="Background" Value="{DynamicResource ReorderBtnBrush}" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="CornerRadius" Value="4" />
-            <Setter Property="HorizontalContentAlignment" Value="Center" />
-            <Setter Property="VerticalContentAlignment" Value="Center" />
-            <Setter Property="Cursor" Value="Hand" />
+        <!-- ═══ Page selection border ═══ -->
+        <Style Selector="Border.page-select">
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="CornerRadius" Value="2" />
         </Style>
-        <Style Selector="Button.reorder-btn:pointerover">
-            <Setter Property="Background" Value="{DynamicResource ReorderBtnHoverBrush}" />
-        </Style>
-
-        <!-- ═══ Drag handle ═══ -->
-        <Style Selector="Border.drag-handle">
-            <Setter Property="Width" Value="28" />
-            <Setter Property="Height" Value="28" />
-            <Setter Property="Background" Value="{DynamicResource ReorderBtnBrush}" />
-            <Setter Property="CornerRadius" Value="4" />
-            <Setter Property="Cursor" Value="Hand" />
-        </Style>
-        <Style Selector="Border.drag-handle:pointerover">
-            <Setter Property="Background" Value="{DynamicResource ReorderBtnHoverBrush}" />
+        <Style Selector="Border.page-select.selected">
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
         </Style>
 
         <!-- ═══ Status bar button ═══ -->

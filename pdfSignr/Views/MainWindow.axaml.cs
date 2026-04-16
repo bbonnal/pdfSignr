@@ -24,6 +24,8 @@ public partial class MainWindow : Window
 
     private MainViewModel ViewModel => (MainViewModel)DataContext!;
     private TextAnnotation? _editingText;
+    private string? _textBeforeEdit;
+    private string? _fontBeforeEdit;
     private double _zoom = 1.0;
     private double _screenScaling = 1.0;
     private int _targetDpi = PdfConstants.RenderDpi;
@@ -38,6 +40,7 @@ public partial class MainWindow : Window
     private bool _pageDragPending;
     private bool _pageDragging;
     private PageItem? _dragSourcePage;
+    private List<PageItem>? _dragSourcePages; // non-null when dragging a multi-selection
     private Point _dragStartPos;
     private Border? _dragAdorner;
     private int _dropTargetIndex = -1;
@@ -49,6 +52,10 @@ public partial class MainWindow : Window
         AddHandler(PageCanvas.CanvasClickedEvent, OnCanvasClicked);
         AddHandler(PageCanvas.AnnotationSelectedEvent, OnAnnotationSelected);
         AddHandler(PageCanvas.DeleteRequestedEvent, OnDeleteRequested);
+        AddHandler(PageCanvas.AnnotationManipulatedEvent, OnAnnotationManipulated);
+        // Tunnel handler for page selection — fires before PageCanvas consumes the event
+        AddHandler(PointerPressedEvent, OnPageAreaPressed, RoutingStrategies.Tunnel);
+        AddHandler(PointerMovedEvent, OnPageAreaPointerMoved, RoutingStrategies.Tunnel);
         // Tunnel so we get the event before ScrollViewer consumes it
         PdfScrollViewer.AddHandler(PointerWheelChangedEvent, OnScrollWheel, RoutingStrategies.Tunnel);
 
@@ -60,6 +67,58 @@ public partial class MainWindow : Window
         AddHandler(DragDrop.DragEnterEvent, OnDragEnter);
         AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
         AddHandler(DragDrop.DropEvent, OnDrop);
+
+        PopulateKeyBindingsFlyout();
+    }
+
+    private void PopulateKeyBindingsFlyout()
+    {
+        string? lastCategory = null;
+        foreach (var kb in Services.KeyBindingService.Bindings)
+        {
+            if (kb.Category != lastCategory)
+            {
+                lastCategory = kb.Category;
+                KeyBindingsFlyout.Children.Add(new TextBlock
+                {
+                    Text = kb.Category,
+                    FontSize = 11,
+                    FontWeight = FontWeight.SemiBold,
+                    Opacity = 0.6,
+                    Margin = new Thickness(0, lastCategory == Services.KeyBindingService.Bindings[0].Category ? 0 : 8, 0, 2)
+                });
+            }
+
+            var row = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("Auto,*"),
+            };
+            var keyBorder = new Border
+            {
+                Background = Avalonia.Media.Brushes.Gray,
+                Opacity = 0.15,
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(6, 1),
+                Margin = new Thickness(0, 0, 10, 0),
+                Child = new TextBlock
+                {
+                    Text = kb.Keys,
+                    FontSize = 11,
+                    FontWeight = FontWeight.SemiBold,
+                }
+            };
+            var desc = new TextBlock
+            {
+                Text = kb.Description,
+                FontSize = 11,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+            };
+            Grid.SetColumn(keyBorder, 0);
+            Grid.SetColumn(desc, 1);
+            row.Children.Add(keyBorder);
+            row.Children.Add(desc);
+            KeyBindingsFlyout.Children.Add(row);
+        }
     }
 
     protected override void OnOpened(EventArgs e)
@@ -95,6 +154,7 @@ public partial class MainWindow : Window
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         ViewModel.PdfLoaded += OnPdfLoaded;
         ViewModel.PageStructureChanged += OnPageStructureChanged;
+        ViewModel.PageRotated += OnPageRotated;
 
         // Warm up the StorageProvider so the first file-open dialog is fast.
         // On Linux/WSL this forces the D-Bus portal connection to initialize in the background.
@@ -106,6 +166,7 @@ public partial class MainWindow : Window
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         ViewModel.PdfLoaded -= OnPdfLoaded;
         ViewModel.PageStructureChanged -= OnPageStructureChanged;
+        ViewModel.PageRotated -= OnPageRotated;
         _rerenderTimer?.Stop();
         _rerenderTimer = null;
         _scrollTimer?.Stop();
@@ -136,6 +197,176 @@ public partial class MainWindow : Window
         var current = new HashSet<PageItem>(ViewModel.Pages);
         foreach (var key in _pageDpi.Keys.Where(k => !current.Contains(k)).ToList())
             _pageDpi.Remove(key);
+    }
+
+    private async void OnPageRotated(PageItem page)
+    {
+        int dpi = _targetDpi;
+        try
+        {
+            var bitmap = await Task.Run(() =>
+                PdfRenderService.RenderPage(
+                    page.Source.PdfBytes, page.Source.SourcePageIndex,
+                    dpi, page.RotationDegrees));
+            page.ReplaceBitmap(bitmap);
+            _pageDpi[page] = dpi;
+        }
+        catch (Exception) { }
+    }
+
+    private void OnPageAreaPressed(object? sender, PointerPressedEventArgs e)
+    {
+        // Walk up from the source to find a PageItem DataContext
+        var source = e.Source as Control;
+        var page = source != null ? FindPageItemFromControl(source) : null;
+        if (page == null)
+        {
+            if (ViewModel.HasSelectedPages)
+                ViewModel.ClearPageSelection();
+            return;
+        }
+
+        // Don't change selection when clicking per-page action buttons or drag handle
+        if (IsPageActionControl(source))
+            return;
+
+        // Clicking on the selection border zone of a selected page → initiate drag
+        if (page.IsSelected)
+        {
+            var selBorder = FindSelectionBorder(source);
+            if (selBorder != null && IsInBorderZone(e.GetPosition(selBorder), selBorder.Bounds))
+            {
+                BeginPageDragFromBorder(page, selBorder, e);
+                return;
+            }
+        }
+
+        bool ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        bool shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+
+        // Only update selection on Ctrl/Shift clicks, or plain clicks (don't set Handled — let annotation interaction proceed)
+        if (ctrl || shift)
+            ViewModel.SelectPage(page, ctrl, shift);
+        else if (!page.IsSelected || ViewModel.SelectedPageCount > 1)
+        {
+            // Plain click on unselected page or multi-selected: exclusive select
+            ViewModel.SelectPage(page, false, false);
+        }
+    }
+
+    private static bool IsPageActionControl(Control? source)
+    {
+        Control? current = source;
+        while (current != null)
+        {
+            if (current is Button btn && btn.Classes.Contains("insert-btn"))
+                return true;
+            current = current.Parent as Control;
+        }
+        return false;
+    }
+
+    private static Border? FindSelectionBorder(Control? source)
+    {
+        Control? current = source;
+        while (current != null)
+        {
+            if (current is Border b && b.Classes.Contains("page-select"))
+                return b;
+            current = current.Parent as Control;
+        }
+        return null;
+    }
+
+    private bool IsInBorderZone(Point pos, Rect bounds)
+    {
+        // 8 physical pixels hit zone around the border edge
+        double hitZone = 8.0 / _zoom;
+        return pos.X < hitZone || pos.X > bounds.Width - hitZone
+            || pos.Y < hitZone || pos.Y > bounds.Height - hitZone;
+    }
+
+    private void BeginPageDragFromBorder(PageItem page, Border border, PointerPressedEventArgs e)
+    {
+        _pageDragPending = true;
+        _pageDragging = false;
+        _dragSourcePage = page;
+        _dragSourcePages = ViewModel.SelectedPageCount > 1
+            ? ViewModel.SelectedPages.ToList()
+            : null;
+        _dragStartPos = e.GetPosition(this);
+        _dropTargetIndex = -1;
+
+        e.Pointer.Capture(border);
+        border.PointerMoved += OnDragHandleMoved;
+        border.PointerReleased += OnDragHandleReleased;
+        e.Handled = true;
+    }
+
+    private static readonly Cursor BorderDragCursor = new(StandardCursorType.Hand);
+    private Border? _lastCursorBorder;
+
+    private void OnPageAreaPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_pageDragging) return; // don't interfere while dragging
+
+        var source = e.Source as Control;
+        var page = source != null ? FindPageItemFromControl(source) : null;
+
+        if (page is { IsSelected: true })
+        {
+            var selBorder = FindSelectionBorder(source);
+            if (selBorder != null && IsInBorderZone(e.GetPosition(selBorder), selBorder.Bounds))
+            {
+                if (_lastCursorBorder != selBorder)
+                {
+                    ClearBorderCursor();
+                    selBorder.Cursor = BorderDragCursor;
+                    _lastCursorBorder = selBorder;
+                }
+                return;
+            }
+        }
+
+        ClearBorderCursor();
+    }
+
+    private void ClearBorderCursor()
+    {
+        if (_lastCursorBorder != null)
+        {
+            _lastCursorBorder.Cursor = null;
+            _lastCursorBorder = null;
+        }
+    }
+
+    private void OnAnnotationManipulated(object? sender, AnnotationManipulatedEventArgs e)
+    {
+        var ann = e.Annotation;
+        double oldX = e.OldX, oldY = e.OldY, oldW = e.OldW, oldH = e.OldH, oldRot = e.OldRot;
+        double newX = e.NewX, newY = e.NewY, newW = e.NewW, newH = e.NewH, newRot = e.NewRot;
+
+        ViewModel.UndoRedo.Push(new Services.UndoEntry(
+            "Move/resize annotation",
+            Undo: () =>
+            {
+                ann.X = oldX; ann.Y = oldY; ann.WidthPt = oldW; ann.HeightPt = oldH; ann.Rotation = oldRot;
+                if (ann is SvgAnnotation svg)
+                {
+                    svg.Scale = svg.OriginalWidthPt > 0 ? oldW / svg.OriginalWidthPt : 1;
+                    svg.ReRender(PdfConstants.RenderDpi);
+                }
+            },
+            Redo: () =>
+            {
+                ann.X = newX; ann.Y = newY; ann.WidthPt = newW; ann.HeightPt = newH; ann.Rotation = newRot;
+                if (ann is SvgAnnotation svg)
+                {
+                    svg.Scale = svg.OriginalWidthPt > 0 ? newW / svg.OriginalWidthPt : 1;
+                    svg.ReRender(PdfConstants.RenderDpi);
+                }
+            }
+        ));
     }
 
     // ═══ Zoom ═══
@@ -169,6 +400,7 @@ public partial class MainWindow : Window
         ZoomTransform.LayoutTransform = new ScaleTransform(_zoom, _zoom);
         ViewModel.ButtonScale = 1.0 / _zoom;
         ViewModel.InsertGapHeight = Math.Ceiling(28.0 / _zoom);
+        ViewModel.SelectionBorderThickness = new Thickness(3.0 / _zoom);
         ViewModel.ZoomPercent = (int)Math.Round(_zoom * 100);
         ViewModel.UpdateStatusText();
 
@@ -309,18 +541,18 @@ public partial class MainWindow : Window
         var pagesToRender = ViewModel.Pages
             .Where(p => visible.Contains(p.Index)
                      && (!_pageDpi.TryGetValue(p, out var cur) || cur != dpi))
-            .Select(p => (Page: p, p.Source.PdfBytes, p.Source.SourcePageIndex))
+            .Select(p => (Page: p, p.Source.PdfBytes, p.Source.SourcePageIndex, p.RotationDegrees))
             .ToList();
 
         // Render in parallel — each page is independent.
         // Continuations run on the UI thread so bitmap swaps are safe.
         var renderTasks = pagesToRender.Select(async item =>
         {
-            var (page, pdfBytes, srcIdx) = item;
+            var (page, pdfBytes, srcIdx, rotDeg) = item;
             try
             {
                 var bitmap = await Task.Run(
-                    () => PdfRenderService.RenderPage(pdfBytes, srcIdx, dpi),
+                    () => PdfRenderService.RenderPage(pdfBytes, srcIdx, dpi, rotDeg),
                     cts.Token);
 
                 if (cts.Token.IsCancellationRequested)
@@ -384,6 +616,8 @@ public partial class MainWindow : Window
         }
 
         _editingText = text;
+        _textBeforeEdit = text.Text;
+        _fontBeforeEdit = text.FontFamily;
 
         // Set values
         InlineTextBox.Text = text.Text;
@@ -405,6 +639,22 @@ public partial class MainWindow : Window
     {
         if (_editingText != null)
         {
+            // Push undo entry if text or font changed
+            var ann = _editingText;
+            var oldText = _textBeforeEdit;
+            var oldFont = _fontBeforeEdit;
+            var newText = ann.Text;
+            var newFont = ann.FontFamily;
+
+            if (oldText != newText || oldFont != newFont)
+            {
+                ViewModel.UndoRedo.Push(new Services.UndoEntry(
+                    "Edit text",
+                    Undo: () => { ann.Text = oldText!; ann.FontFamily = oldFont!; },
+                    Redo: () => { ann.Text = newText; ann.FontFamily = newFont; }
+                ));
+            }
+
             _editingText.PropertyChanged -= OnEditingAnnotationMoved;
             InlineTextBox.TextChanged -= OnInlineTextChanged;
             InlineFontCombo.SelectionChanged -= OnInlineFontChanged;
@@ -493,24 +743,6 @@ public partial class MainWindow : Window
 
     // ═══ Page drag-to-reorder ═══
 
-    private void OnDragHandlePressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (sender is not Control handle) return;
-        var pageItem = FindPageItemFromControl(handle);
-        if (pageItem == null) return;
-
-        _pageDragPending = true;
-        _pageDragging = false;
-        _dragSourcePage = pageItem;
-        _dragStartPos = e.GetPosition(this);
-        _dropTargetIndex = -1;
-
-        e.Pointer.Capture(handle);
-        handle.PointerMoved += OnDragHandleMoved;
-        handle.PointerReleased += OnDragHandleReleased;
-        e.Handled = true;
-    }
-
     private void OnDragHandleMoved(object? sender, PointerEventArgs e)
     {
         if (!_pageDragPending || _dragSourcePage == null) return;
@@ -550,15 +782,20 @@ public partial class MainWindow : Window
 
         if (_pageDragging && _dragSourcePage != null && _dropTargetIndex >= 0)
         {
-            int fromIndex = ViewModel.Pages.IndexOf(_dragSourcePage);
-            int toIndex = _dropTargetIndex;
-            // Adjust target: if moving forward, the removal shifts indices
-            if (fromIndex < toIndex) toIndex--;
-            if (fromIndex >= 0 && toIndex >= 0 && toIndex < ViewModel.Pages.Count && fromIndex != toIndex)
+            if (_dragSourcePages != null)
             {
-                ViewModel.Pages.Move(fromIndex, toIndex);
-                ViewModel.RenumberPages();
-                OnPageStructureChanged();
+                ViewModel.MovePagesByDrag(_dragSourcePages, _dropTargetIndex);
+            }
+            else
+            {
+                int fromIndex = ViewModel.Pages.IndexOf(_dragSourcePage);
+                int toIndex = _dropTargetIndex;
+                // Adjust target: if moving forward, the removal shifts indices
+                if (fromIndex < toIndex) toIndex--;
+                if (fromIndex >= 0 && toIndex >= 0 && toIndex < ViewModel.Pages.Count && fromIndex != toIndex)
+                {
+                    ViewModel.MovePageByDrag(fromIndex, toIndex);
+                }
             }
         }
 
@@ -567,6 +804,7 @@ public partial class MainWindow : Window
         _pageDragPending = false;
         _pageDragging = false;
         _dragSourcePage = null;
+        _dragSourcePages = null;
         _dropTargetIndex = -1;
         ViewModel.IsDraggingPage = false;
         e.Handled = true;
@@ -587,9 +825,39 @@ public partial class MainWindow : Window
             Height = thumbH
         };
 
+        Control child;
+        if (_dragSourcePages != null && _dragSourcePages.Count > 1)
+        {
+            // Multi-page drag: show thumbnail with count badge
+            var badge = new Border
+            {
+                Background = Brushes.DodgerBlue,
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(6, 2),
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top,
+                Margin = new Thickness(0, -8, -8, 0),
+                Child = new TextBlock
+                {
+                    Text = _dragSourcePages.Count.ToString(),
+                    Foreground = Brushes.White,
+                    FontSize = 11,
+                    FontWeight = FontWeight.Bold
+                }
+            };
+            var grid = new Grid { Width = thumbW, Height = thumbH };
+            grid.Children.Add(image);
+            grid.Children.Add(badge);
+            child = grid;
+        }
+        else
+        {
+            child = image;
+        }
+
         _dragAdorner = new Border
         {
-            Child = image,
+            Child = child,
             Background = Brushes.White,
             BoxShadow = new BoxShadows(new BoxShadow { OffsetX = 0, OffsetY = 2, Blur = 8, Color = new Color(100, 0, 0, 0) }),
             Opacity = 0.8,
@@ -784,7 +1052,7 @@ public partial class MainWindow : Window
             {
                 var bitmap = await Task.Run(
                     () => PdfRenderService.RenderPage(
-                        page.Source.PdfBytes, page.Source.SourcePageIndex, dpi),
+                        page.Source.PdfBytes, page.Source.SourcePageIndex, dpi, page.RotationDegrees),
                     cts.Token);
 
                 if (cts.Token.IsCancellationRequested) { bitmap.Dispose(); return; }
@@ -812,13 +1080,51 @@ public partial class MainWindow : Window
         }
 
         base.OnKeyDown(e);
+        bool ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        bool shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
 
-        if (e.Key == Key.Delete || e.Key == Key.Back)
+        if (ctrl)
         {
+            if (e.Key == Key.Z && !shift)
+            { if (ViewModel.UndoCommand.CanExecute(null)) ViewModel.UndoCommand.Execute(null); e.Handled = true; }
+            else if (e.Key == Key.Y || (e.Key == Key.Z && shift))
+            { if (ViewModel.RedoCommand.CanExecute(null)) ViewModel.RedoCommand.Execute(null); e.Handled = true; }
+            else if (e.Key == Key.A)
+            { ViewModel.SelectAllPages(); e.Handled = true; }
+            else if (e.Key == Key.O)
+            { ViewModel.OpenCommand.Execute(null); e.Handled = true; }
+            else if (e.Key == Key.S)
+            {
+                // Save selected pages if selection exists, otherwise save all
+                if (ViewModel.HasSelectedPages && ViewModel.SaveSelectedPagesCommand.CanExecute(null))
+                    ViewModel.SaveSelectedPagesCommand.Execute(null);
+                else if (ViewModel.SaveCommand.CanExecute(null))
+                    ViewModel.SaveCommand.Execute(null);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.D0 || e.Key == Key.NumPad0)
+            { FitToWidth(); e.Handled = true; }
+            else if (e.Key == Key.OemPlus || e.Key == Key.Add)
+            { ApplyZoom(Math.Clamp(_zoom + ZoomStep, MinZoom, MaxZoom)); e.Handled = true; }
+            else if (e.Key == Key.OemMinus || e.Key == Key.Subtract)
+            { ApplyZoom(Math.Clamp(_zoom - ZoomStep, MinZoom, MaxZoom)); e.Handled = true; }
+            else if (e.Key == Key.Up)
+            { SelectAdjacentPage(-1, addToSelection: true); e.Handled = true; }
+            else if (e.Key == Key.Down)
+            { SelectAdjacentPage(1, addToSelection: true); e.Handled = true; }
+        }
+        else if (e.Key == Key.Delete || e.Key == Key.Back)
+        {
+            // Delete selected annotation first, then fall back to selected pages
             if (ViewModel.DeleteCommand.CanExecute(null))
             {
                 HideTextEditor();
                 ViewModel.DeleteCommand.Execute(null);
+                e.Handled = true;
+            }
+            else if (ViewModel.HasSelectedPages)
+            {
+                ViewModel.DeleteSelectedPagesCommand.Execute(null);
                 e.Handled = true;
             }
         }
@@ -827,20 +1133,192 @@ public partial class MainWindow : Window
             HideTextEditor();
             ViewModel.CurrentTool = ToolMode.Select;
             ViewModel.SelectAnnotation(null);
+            if (ViewModel.HasSelectedPages)
+                ViewModel.ClearPageSelection();
             e.Handled = true;
         }
-        else if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        else if (e.Key == Key.R)
         {
-            if (e.Key == Key.O)
-            { ViewModel.OpenCommand.Execute(null); e.Handled = true; }
-            else if (e.Key == Key.S)
-            { if (ViewModel.SaveCommand.CanExecute(null)) ViewModel.SaveCommand.Execute(null); e.Handled = true; }
-            else if (e.Key == Key.D0 || e.Key == Key.NumPad0)
-            { FitToWidth(); e.Handled = true; }
-            else if (e.Key == Key.OemPlus || e.Key == Key.Add)
-            { ApplyZoom(Math.Clamp(_zoom + ZoomStep, MinZoom, MaxZoom)); e.Handled = true; }
-            else if (e.Key == Key.OemMinus || e.Key == Key.Subtract)
-            { ApplyZoom(Math.Clamp(_zoom - ZoomStep, MinZoom, MaxZoom)); e.Handled = true; }
+            PageItem? target = null;
+            if (ViewModel.HasSelectedPages)
+                target = ViewModel.SelectedPages.First();
+            else
+            {
+                var visible = GetVisiblePageIndices();
+                if (visible.Count > 0)
+                    target = ViewModel.Pages[visible.Min()];
+            }
+            if (target != null)
+            {
+                if (shift)
+                    ViewModel.RotatePageCcwCommand.Execute(target);
+                else
+                    ViewModel.RotatePageCwCommand.Execute(target);
+                e.Handled = true;
+            }
+        }
+        else if (e.Key == Key.M)
+        {
+            var target = GetSelectedOrVisiblePage();
+            if (target != null)
+            {
+                if (shift)
+                    ViewModel.MovePageDownCommand.Execute(target);
+                else
+                    ViewModel.MovePageUpCommand.Execute(target);
+                e.Handled = true;
+            }
+        }
+        else if (e.Key == Key.S)
+        {
+            ViewModel.ToggleSignToolCommand.Execute(null);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.A)
+        {
+            ViewModel.ToggleTextToolCommand.Execute(null);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.G)
+        {
+            ViewModel.IsGridMode = !ViewModel.IsGridMode;
+            ApplyGridMode(ViewModel.IsGridMode);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Enter)
+        {
+            SelectCenterPage();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Up)
+        {
+            ScrollByPages(-1);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Down)
+        {
+            ScrollByPages(1);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.D0 || e.Key == Key.NumPad0)
+        { FitToWidth(); e.Handled = true; }
+        else if (e.Key == Key.OemPlus || e.Key == Key.Add)
+        { ApplyZoom(Math.Clamp(_zoom + ZoomStep, MinZoom, MaxZoom)); e.Handled = true; }
+        else if (e.Key == Key.OemMinus || e.Key == Key.Subtract)
+        { ApplyZoom(Math.Clamp(_zoom - ZoomStep, MinZoom, MaxZoom)); e.Handled = true; }
+    }
+
+    private PageItem? GetSelectedOrVisiblePage()
+    {
+        if (ViewModel.HasSelectedPages)
+            return ViewModel.SelectedPages.First();
+        var visible = GetVisiblePageIndices();
+        return visible.Count > 0 ? ViewModel.Pages[visible.Min()] : null;
+    }
+
+    private void SelectCenterPage()
+    {
+        if (ViewModel.Pages.Count == 0) return;
+        var center = new Point(
+            PdfScrollViewer.Viewport.Width / 2,
+            PdfScrollViewer.Viewport.Height / 2);
+
+        var itemsControl = (ItemsControl)ZoomTransform.Child!;
+        int bestIndex = -1;
+        double minDist = double.MaxValue;
+
+        for (int i = 0; i < ViewModel.Pages.Count; i++)
+        {
+            var container = itemsControl.ContainerFromIndex(i);
+            if (container == null) continue;
+            var top = container.TranslatePoint(new Point(0, 0), PdfScrollViewer);
+            var bottom = container.TranslatePoint(
+                new Point(container.Bounds.Width, container.Bounds.Height), PdfScrollViewer);
+            if (top == null || bottom == null) continue;
+
+            double midY = (top.Value.Y + bottom.Value.Y) / 2;
+            double dist = Math.Abs(center.Y - midY);
+            if (dist < minDist) { minDist = dist; bestIndex = i; }
+        }
+
+        if (bestIndex >= 0)
+        {
+            ViewModel.ClearPageSelection();
+            ViewModel.Pages[bestIndex].IsSelected = true;
+            ViewModel.UpdateSelectionState();
+        }
+    }
+
+    private void ScrollByPages(int direction)
+    {
+        // Scroll by roughly one page height
+        double step = PdfScrollViewer.Viewport.Height * 0.85;
+        var offset = PdfScrollViewer.Offset;
+        PdfScrollViewer.Offset = new Vector(
+            offset.X,
+            Math.Max(0, offset.Y + direction * step));
+    }
+
+    private void SelectAdjacentPage(int direction, bool addToSelection)
+    {
+        if (ViewModel.Pages.Count == 0) return;
+
+        // Find the "anchor" — the last selected page or the center page
+        int anchorIndex;
+        if (ViewModel.HasSelectedPages)
+        {
+            var selected = ViewModel.Pages
+                .Select((p, i) => (p, i))
+                .Where(x => x.p.IsSelected)
+                .Select(x => x.i);
+            anchorIndex = direction > 0 ? selected.Max() : selected.Min();
+        }
+        else
+        {
+            // Nothing selected — use center page
+            SelectCenterPage();
+            return;
+        }
+
+        int targetIndex = Math.Clamp(anchorIndex + direction, 0, ViewModel.Pages.Count - 1);
+        if (targetIndex == anchorIndex) return;
+
+        if (addToSelection)
+            ViewModel.Pages[targetIndex].IsSelected = true;
+        else
+        {
+            ViewModel.ClearPageSelection();
+            ViewModel.Pages[targetIndex].IsSelected = true;
+        }
+        ViewModel.UpdateSelectionState();
+        ScrollPageIntoView(targetIndex);
+    }
+
+    private void ScrollPageIntoView(int pageIndex)
+    {
+        var itemsControl = (ItemsControl)ZoomTransform.Child!;
+        var container = itemsControl.ContainerFromIndex(pageIndex);
+        if (container == null) return;
+
+        var top = container.TranslatePoint(new Point(0, 0), PdfScrollViewer);
+        var bottom = container.TranslatePoint(
+            new Point(0, container.Bounds.Height), PdfScrollViewer);
+        if (top == null || bottom == null) return;
+
+        double viewH = PdfScrollViewer.Viewport.Height;
+        if (top.Value.Y < 0)
+        {
+            // Page is above viewport — scroll up
+            PdfScrollViewer.Offset = new Vector(
+                PdfScrollViewer.Offset.X,
+                PdfScrollViewer.Offset.Y + top.Value.Y - 20);
+        }
+        else if (bottom.Value.Y > viewH)
+        {
+            // Page is below viewport — scroll down
+            PdfScrollViewer.Offset = new Vector(
+                PdfScrollViewer.Offset.X,
+                PdfScrollViewer.Offset.Y + bottom.Value.Y - viewH + 20);
         }
     }
 
@@ -910,6 +1388,17 @@ public partial class MainWindow : Window
 
         // Visible pages change when layout switches, schedule re-render
         ScheduleRerender();
+    }
+
+    // ═══ Save flyout ═══
+
+    private void OnSaveRangeClick(object? sender, RoutedEventArgs e)
+    {
+        var text = SaveRangeBox.Text?.Trim();
+        if (string.IsNullOrEmpty(text)) return;
+
+        if (ViewModel.SavePageRangeCommand.CanExecute(text))
+            ViewModel.SavePageRangeCommand.Execute(text);
     }
 
     // ═══ Theme toggle ═══

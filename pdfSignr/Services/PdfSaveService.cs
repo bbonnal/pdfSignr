@@ -12,15 +12,19 @@ public static class PdfSaveService
     public static void SaveSinglePage(
         string outputPath,
         PageSource source,
+        int rotationDegrees,
+        double originalWidthPt,
+        double originalHeightPt,
         IEnumerable<Annotation> annotations)
     {
-        Save(outputPath, [(source, annotations)]);
+        Save(outputPath, [(source, rotationDegrees, originalWidthPt, originalHeightPt, annotations)]);
     }
 
     /// <summary>Saves multiple pages with annotations to a new PDF file.</summary>
     public static void Save(
         string outputPath,
-        IEnumerable<(PageSource Source, IEnumerable<Annotation> Annotations)> pages)
+        IEnumerable<(PageSource Source, int RotationDegrees, double OriginalWidthPt, double OriginalHeightPt,
+            IEnumerable<Annotation> Annotations)> pages)
     {
         var sourceDocCache = new Dictionary<byte[], PdfDocument>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         var fileCache = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
@@ -28,7 +32,7 @@ public static class PdfSaveService
 
         try
         {
-            foreach (var (source, annotations) in pages)
+            foreach (var (source, rotationDegrees, origW, origH, annotations) in pages)
             {
                 if (!sourceDocCache.TryGetValue(source.PdfBytes, out var sourceDoc))
                 {
@@ -39,19 +43,27 @@ public static class PdfSaveService
 
                 var importedPage = outputDoc.AddPage(sourceDoc.Pages[source.SourcePageIndex]);
 
+                if (rotationDegrees != 0)
+                    importedPage.Rotate = (importedPage.Rotate + rotationDegrees) % 360;
+
                 var annList = annotations.ToList();
                 if (annList.Count > 0)
                 {
                     using var gfx = XGraphics.FromPdfPage(importedPage, XGraphicsPdfPageOptions.Append);
                     foreach (var annotation in annList)
                     {
+                        // Inverse-transform annotation coordinates from rotated view back to original page space
+                        var (drawX, drawY) = InverseTransformAnnotation(
+                            annotation.X, annotation.Y, annotation.WidthPt, annotation.HeightPt,
+                            rotationDegrees, origW, origH);
+
                         switch (annotation)
                         {
                             case TextAnnotation text:
-                                DrawText(gfx, text);
+                                DrawText(gfx, text, drawX, drawY);
                                 break;
                             case SvgAnnotation svg:
-                                DrawSvg(gfx, svg, fileCache);
+                                DrawSvg(gfx, svg, drawX, drawY, fileCache);
                                 break;
                         }
                     }
@@ -68,20 +80,33 @@ public static class PdfSaveService
         }
     }
 
-    private static void WithRotation(XGraphics gfx, Annotation ann, Action draw)
+    private static (double x, double y) InverseTransformAnnotation(
+        double annX, double annY, double annW, double annH,
+        int rotationDegrees, double origW, double origH)
+    {
+        return rotationDegrees switch
+        {
+            90  => (annY, origH - annX - annH),
+            180 => (origW - annX - annW, origH - annY - annH),
+            270 => (origW - annY - annW, annX),
+            _   => (annX, annY)
+        };
+    }
+
+    private static void WithRotation(XGraphics gfx, Annotation ann, double drawX, double drawY, Action draw)
     {
         if (ann.Rotation != 0)
         {
             var state = gfx.Save();
             gfx.RotateAtTransform(ann.Rotation,
-                new XPoint(ann.X + ann.WidthPt / 2.0, ann.Y + ann.HeightPt / 2.0));
+                new XPoint(drawX + ann.WidthPt / 2.0, drawY + ann.HeightPt / 2.0));
             draw();
             gfx.Restore(state);
         }
         else draw();
     }
 
-    private static void DrawText(XGraphics gfx, TextAnnotation text)
+    private static void DrawText(XGraphics gfx, TextAnnotation text, double drawX, double drawY)
     {
         var font = new XFont(text.FontFamily, text.FontSize);
         var format = new XStringFormat
@@ -89,15 +114,16 @@ public static class PdfSaveService
             Alignment = XStringAlignment.Near,
             LineAlignment = XLineAlignment.Near
         };
-        WithRotation(gfx, text, () =>
-            gfx.DrawString(text.Text, font, XBrushes.Black, new XPoint(text.X, text.Y), format));
+        WithRotation(gfx, text, drawX, drawY, () =>
+            gfx.DrawString(text.Text, font, XBrushes.Black, new XPoint(drawX, drawY), format));
     }
 
-    private static void DrawSvg(XGraphics gfx, SvgAnnotation svg, Dictionary<string, byte[]> fileCache)
+    private static void DrawSvg(XGraphics gfx, SvgAnnotation svg, double drawX, double drawY,
+        Dictionary<string, byte[]> fileCache)
     {
         if (svg.IsRaster)
         {
-            DrawRasterImage(gfx, svg, fileCache);
+            DrawRasterImage(gfx, svg, drawX, drawY, fileCache);
             return;
         }
 
@@ -107,11 +133,12 @@ public static class PdfSaveService
 
         using var stream = new MemoryStream(pdfBytes);
         using var form = XPdfForm.FromStream(stream);
-        WithRotation(gfx, svg, () =>
-            gfx.DrawImage(form, svg.X, svg.Y, svg.WidthPt, svg.HeightPt));
+        WithRotation(gfx, svg, drawX, drawY, () =>
+            gfx.DrawImage(form, drawX, drawY, svg.WidthPt, svg.HeightPt));
     }
 
-    private static void DrawRasterImage(XGraphics gfx, SvgAnnotation ann, Dictionary<string, byte[]> fileCache)
+    private static void DrawRasterImage(XGraphics gfx, SvgAnnotation ann, double drawX, double drawY,
+        Dictionary<string, byte[]> fileCache)
     {
         if (!fileCache.TryGetValue(ann.SvgFilePath, out var imageBytes))
         {
@@ -122,7 +149,7 @@ public static class PdfSaveService
 
         using var stream = new MemoryStream(imageBytes);
         using var image = XImage.FromStream(stream);
-        WithRotation(gfx, ann, () =>
-            gfx.DrawImage(image, ann.X, ann.Y, ann.WidthPt, ann.HeightPt));
+        WithRotation(gfx, ann, drawX, drawY, () =>
+            gfx.DrawImage(image, drawX, drawY, ann.WidthPt, ann.HeightPt));
     }
 }

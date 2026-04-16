@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using Avalonia;
 using Avalonia.Input;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -31,6 +32,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private double _insertGapHeight = 28;
     [ObservableProperty] private bool _isGridMode;
     [ObservableProperty] private bool _isDraggingPage;
+    [ObservableProperty] private Thickness _selectionBorderThickness = new(3);
 
     public bool IsNotDraggingFile => !IsDraggingFile;
     public bool IsNotDragging => !IsDraggingFile && !IsDraggingPage;
@@ -86,11 +88,19 @@ public partial class MainViewModel : ObservableObject
         ? DragMoveCursor : null;
 
     public event Action? PdfLoaded;
+    public event Action<PageItem>? PageRotated;
+
+    public UndoRedoService UndoRedo { get; } = new();
 
     public MainViewModel(IFileDialogService fileDialogs)
     {
         _fileDialogs = fileDialogs;
         Pages.CollectionChanged += OnPagesCollectionChanged;
+        UndoRedo.PropertyChanged += (_, _) =>
+        {
+            UndoCommand.NotifyCanExecuteChanged();
+            RedoCommand.NotifyCanExecuteChanged();
+        };
     }
 
     partial void OnPagesChanged(ObservableCollection<PageItem>? oldValue, ObservableCollection<PageItem> newValue)
@@ -108,6 +118,7 @@ public partial class MainViewModel : ObservableObject
         SaveCommand.NotifyCanExecuteChanged();
         CompressResampleCommand.NotifyCanExecuteChanged();
         CompressRasterizeCommand.NotifyCanExecuteChanged();
+        SavePageRangeCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasNoPages));
     }
 
@@ -131,7 +142,8 @@ public partial class MainViewModel : ObservableObject
                                (s.Rotation != 0 ? $"  {s.Rotation:F0}\u00b0" : ""),
             _ => ""
         };
-        StatusText = $"{_baseStatus}{info}  \u2502  {ZoomPercent}%";
+        var selInfo = SelectedPageCount > 1 ? $"  \u2502  {SelectedPageCount} pages selected" : "";
+        StatusText = $"{_baseStatus}{info}{selInfo}  \u2502  {ZoomPercent}%";
     }
 
     partial void OnPdfFilePathChanged(string? value)
@@ -151,6 +163,14 @@ public partial class MainViewModel : ObservableObject
     }
 
     // --- Commands ---
+
+    [RelayCommand(CanExecute = nameof(CanUndo))]
+    private void Undo() => UndoRedo.Undo();
+    private bool CanUndo => UndoRedo.CanUndo;
+
+    [RelayCommand(CanExecute = nameof(CanRedo))]
+    private void Redo() => UndoRedo.Redo();
+    private bool CanRedo => UndoRedo.CanRedo;
 
     [RelayCommand]
     private async Task Open()
@@ -182,6 +202,7 @@ public partial class MainViewModel : ObservableObject
             PdfFilePath = path;
             SelectAnnotation(null);
             Pages = newPages;
+            UndoRedo.Clear();
 
             BaseStatus = $"{fileName} \u2014 {newPages.Count} page{(newPages.Count != 1 ? "s" : "")}";
             PdfLoaded?.Invoke();
@@ -205,7 +226,7 @@ public partial class MainViewModel : ObservableObject
             items[i] = new PageItem
             {
                 Index = startIndex + i,
-                Bitmap = null, WidthPt = w, HeightPt = h,
+                Bitmap = null, OriginalWidthPt = w, OriginalHeightPt = h,
                 Source = new PageSource(pdfBytes, i)
             };
         }
@@ -220,7 +241,6 @@ public partial class MainViewModel : ObservableObject
         {
             items[i].DisplayNumber = i + 1;
             items[i].IsFirst = i == 0;
-            items[i].IsLast = i == count - 1;
         }
         return new ObservableCollection<PageItem>(items);
     }
@@ -236,7 +256,8 @@ public partial class MainViewModel : ObservableObject
         if (outputPath == null) return;
 
         var pagesWithAnnotations = Pages
-            .Select(p => (p.Source, (IEnumerable<Annotation>)p.Annotations));
+            .Select(p => (p.Source, p.RotationDegrees, p.OriginalWidthPt, p.OriginalHeightPt,
+                          (IEnumerable<Annotation>)p.Annotations));
 
         try
         {
@@ -256,15 +277,25 @@ public partial class MainViewModel : ObservableObject
     private void Delete()
     {
         if (SelectedAnnotation == null) return;
+        var ann = SelectedAnnotation;
 
-        SelectedAnnotation.Dispose();
-
+        PageItem? ownerPage = null;
+        int annIndex = -1;
         foreach (var page in Pages)
         {
-            if (page.Annotations.Remove(SelectedAnnotation))
-                break;
+            int idx = page.Annotations.IndexOf(ann);
+            if (idx >= 0) { ownerPage = page; annIndex = idx; break; }
         }
+        if (ownerPage == null) return;
+
+        ownerPage.Annotations.RemoveAt(annIndex);
         SelectAnnotation(null);
+
+        UndoRedo.Push(new UndoEntry(
+            "Delete annotation",
+            Undo: () => { ownerPage.Annotations.Insert(annIndex, ann); SelectAnnotation(ann); },
+            Redo: () => { ownerPage.Annotations.Remove(ann); SelectAnnotation(null); }
+        ));
     }
 
     private bool CanDelete => SelectedAnnotation != null;
@@ -294,81 +325,283 @@ public partial class MainViewModel : ObservableObject
         CurrentTool = ToolMode.Signature;
     }
 
-    // --- Save single page ---
-
-    [RelayCommand]
-    private async Task SaveSinglePage(PageItem page)
-    {
-        var defaultName = PdfFilePath != null
-            ? Path.GetFileNameWithoutExtension(PdfFilePath) + $"_page{page.Index + 1}"
-            : $"page{page.Index + 1}";
-
-        var outputPath = await _fileDialogs.PickSaveFileAsync("Save Single Page", defaultName, ".pdf", ["*.pdf"]);
-        if (outputPath == null) return;
-
-        try
-        {
-            PdfSaveService.SaveSinglePage(outputPath, page.Source, page.Annotations);
-            BaseStatus = $"Page {page.Index + 1} saved to {Path.GetFileName(outputPath)}";
-        }
-        catch (Exception ex)
-        {
-            BaseStatus = $"Save failed: {ex.Message}";
-            await _fileDialogs.ShowErrorAsync("Save Failed", ex.Message);
-        }
-    }
-
-    // --- Page removal ---
+    // --- Page removal / reordering ---
 
     public event Action? PageStructureChanged;
 
     [RelayCommand]
-    private async Task RemovePage(PageItem page)
-    {
-        var idx = Pages.IndexOf(page);
-        if (idx < 0) return;
-
-        if (!await _fileDialogs.ConfirmAsync("Remove Page", $"Remove page {page.DisplayNumber}? This cannot be undone."))
-            return;
-
-        page.DisposeResources();
-
-        if (SelectedAnnotation != null && page.Annotations.Contains(SelectedAnnotation))
-            SelectAnnotation(null);
-
-        Pages.RemoveAt(idx);
-
-        if (Pages.Count == 0)
-        {
-            PdfFilePath = null;
-            BaseStatus = "Open a PDF to get started";
-        }
-        else
-        {
-            RenumberPages();
-        }
-
-        PageStructureChanged?.Invoke();
-    }
-
-    // --- Page reordering ---
-
-    [RelayCommand]
     private void MovePageUp(PageItem page)
     {
+        if (page.IsSelected && SelectedPageCount > 1)
+        {
+            MoveSelectedPagesUp();
+            return;
+        }
+
         var idx = Pages.IndexOf(page);
         if (idx <= 0) return;
         Pages.Move(idx, idx - 1);
         RenumberPages();
+
+        UndoRedo.Push(new UndoEntry(
+            "Move page up",
+            Undo: () => { Pages.Move(idx - 1, idx); RenumberPages(); },
+            Redo: () => { Pages.Move(idx, idx - 1); RenumberPages(); }
+        ));
     }
 
     [RelayCommand]
     private void MovePageDown(PageItem page)
     {
+        if (page.IsSelected && SelectedPageCount > 1)
+        {
+            MoveSelectedPagesDown();
+            return;
+        }
+
         var idx = Pages.IndexOf(page);
         if (idx < 0 || idx >= Pages.Count - 1) return;
         Pages.Move(idx, idx + 1);
         RenumberPages();
+
+        UndoRedo.Push(new UndoEntry(
+            "Move page down",
+            Undo: () => { Pages.Move(idx + 1, idx); RenumberPages(); },
+            Redo: () => { Pages.Move(idx, idx + 1); RenumberPages(); }
+        ));
+    }
+
+    private void MoveSelectedPagesUp()
+    {
+        var orderBefore = Pages.ToList();
+        var selectedIndices = Pages
+            .Select((p, i) => (p, i))
+            .Where(x => x.p.IsSelected)
+            .Select(x => x.i)
+            .OrderBy(i => i)
+            .ToList();
+
+        int barrier = 0;
+        bool moved = false;
+        foreach (var idx in selectedIndices)
+        {
+            if (idx > barrier)
+            {
+                Pages.Move(idx, idx - 1);
+                moved = true;
+                // The non-selected page that was at idx-1 is now at idx
+            }
+            else
+            {
+                barrier = idx + 1;
+            }
+        }
+
+        if (!moved) return;
+        RenumberPages();
+
+        var orderAfter = Pages.ToList();
+        UndoRedo.Push(new UndoEntry(
+            "Move selected pages up",
+            Undo: () => ReorderPages(orderBefore),
+            Redo: () => ReorderPages(orderAfter)
+        ));
+    }
+
+    private void MoveSelectedPagesDown()
+    {
+        var orderBefore = Pages.ToList();
+        var selectedIndices = Pages
+            .Select((p, i) => (p, i))
+            .Where(x => x.p.IsSelected)
+            .Select(x => x.i)
+            .OrderByDescending(i => i)
+            .ToList();
+
+        int barrier = Pages.Count - 1;
+        bool moved = false;
+        foreach (var idx in selectedIndices)
+        {
+            if (idx < barrier)
+            {
+                Pages.Move(idx, idx + 1);
+                moved = true;
+            }
+            else
+            {
+                barrier = idx - 1;
+            }
+        }
+
+        if (!moved) return;
+        RenumberPages();
+
+        var orderAfter = Pages.ToList();
+        UndoRedo.Push(new UndoEntry(
+            "Move selected pages down",
+            Undo: () => ReorderPages(orderBefore),
+            Redo: () => ReorderPages(orderAfter)
+        ));
+    }
+
+    private void ReorderPages(IReadOnlyList<PageItem> order)
+    {
+        Pages.Clear();
+        foreach (var p in order) Pages.Add(p);
+        RenumberPages();
+        PageStructureChanged?.Invoke();
+    }
+
+    public void MovePageByDrag(int fromIndex, int toIndex)
+    {
+        if (fromIndex == toIndex || fromIndex < 0 || toIndex < 0) return;
+        Pages.Move(fromIndex, toIndex);
+        RenumberPages();
+        PageStructureChanged?.Invoke();
+
+        UndoRedo.Push(new UndoEntry(
+            "Reorder page",
+            Undo: () => { Pages.Move(toIndex, fromIndex); RenumberPages(); PageStructureChanged?.Invoke(); },
+            Redo: () => { Pages.Move(fromIndex, toIndex); RenumberPages(); PageStructureChanged?.Invoke(); }
+        ));
+    }
+
+    public void MovePagesByDrag(IReadOnlyList<PageItem> pages, int targetIndex)
+    {
+        if (pages.Count == 0 || targetIndex < 0) return;
+
+        var orderBefore = Pages.ToList();
+
+        // Get original indices sorted descending for safe removal
+        var indices = pages.Select(p => Pages.IndexOf(p)).Where(i => i >= 0).OrderByDescending(i => i).ToList();
+        int countBefore = indices.Count(i => i < targetIndex);
+
+        foreach (var idx in indices)
+            Pages.RemoveAt(idx);
+
+        // Adjust insert position: for each removed page that was before target, target shifts down by 1
+        int insertAt = Math.Min(targetIndex - countBefore, Pages.Count);
+
+        // Insert in original relative order (ascending)
+        var ordered = pages.Where(p => !Pages.Contains(p)).ToList();
+        for (int i = 0; i < ordered.Count; i++)
+            Pages.Insert(insertAt + i, ordered[i]);
+
+        RenumberPages();
+        PageStructureChanged?.Invoke();
+
+        var orderAfter = Pages.ToList();
+        UndoRedo.Push(new UndoEntry(
+            $"Reorder {pages.Count} pages",
+            Undo: () => ReorderPages(orderBefore),
+            Redo: () => ReorderPages(orderAfter)
+        ));
+    }
+
+    // --- Page rotation ---
+
+    [RelayCommand]
+    private void RotatePageCw(PageItem page)
+    {
+        if (page.IsSelected && SelectedPageCount > 1)
+            RotateSelectedPages(90);
+        else
+            RotatePage(page, 90);
+    }
+
+    [RelayCommand]
+    private void RotatePageCcw(PageItem page)
+    {
+        if (page.IsSelected && SelectedPageCount > 1)
+            RotateSelectedPages(270);
+        else
+            RotatePage(page, 270);
+    }
+
+    private void RotatePage(PageItem page, int degrees)
+    {
+        int oldRotation = page.RotationDegrees;
+        double oldW = page.WidthPt;
+        double oldH = page.HeightPt;
+
+        // Snapshot annotation positions before rotation for undo
+        var annSnaps = page.Annotations.Select(a => (Ann: a, a.X, a.Y)).ToList();
+
+        page.RotateAnnotations(degrees, oldW, oldH);
+        page.RotationDegrees = (page.RotationDegrees + degrees) % 360;
+        int newRotation = page.RotationDegrees;
+
+        // Snapshot after
+        var annSnapsAfter = page.Annotations.Select(a => (Ann: a, a.X, a.Y)).ToList();
+
+        PageRotated?.Invoke(page);
+
+        UndoRedo.Push(new UndoEntry(
+            "Rotate page",
+            Undo: () =>
+            {
+                page.RotationDegrees = oldRotation;
+                foreach (var (ann, x, y) in annSnaps) { ann.X = x; ann.Y = y; }
+                PageRotated?.Invoke(page);
+            },
+            Redo: () =>
+            {
+                page.RotationDegrees = newRotation;
+                foreach (var (ann, x, y) in annSnapsAfter) { ann.X = x; ann.Y = y; }
+                PageRotated?.Invoke(page);
+            }
+        ));
+    }
+
+    private void RotateSelectedPages(int degrees)
+    {
+        var selected = SelectedPages.ToList();
+        var snapshots = selected.Select(p => new
+        {
+            Page = p,
+            OldRotation = p.RotationDegrees,
+            OldW = p.WidthPt,
+            OldH = p.HeightPt,
+            AnnsBefore = p.Annotations.Select(a => (Ann: a, a.X, a.Y)).ToList()
+        }).ToList();
+
+        foreach (var snap in snapshots)
+        {
+            snap.Page.RotateAnnotations(degrees, snap.OldW, snap.OldH);
+            snap.Page.RotationDegrees = (snap.Page.RotationDegrees + degrees) % 360;
+        }
+
+        var snapshotsAfter = snapshots.Select(s => new
+        {
+            s.Page,
+            NewRotation = s.Page.RotationDegrees,
+            AnnsAfter = s.Page.Annotations.Select(a => (Ann: a, a.X, a.Y)).ToList()
+        }).ToList();
+
+        foreach (var snap in snapshots)
+            PageRotated?.Invoke(snap.Page);
+
+        UndoRedo.Push(new UndoEntry(
+            $"Rotate {selected.Count} pages",
+            Undo: () =>
+            {
+                foreach (var snap in snapshots)
+                {
+                    snap.Page.RotationDegrees = snap.OldRotation;
+                    foreach (var (ann, x, y) in snap.AnnsBefore) { ann.X = x; ann.Y = y; }
+                    PageRotated?.Invoke(snap.Page);
+                }
+            },
+            Redo: () =>
+            {
+                foreach (var snap in snapshotsAfter)
+                {
+                    snap.Page.RotationDegrees = snap.NewRotation;
+                    foreach (var (ann, x, y) in snap.AnnsAfter) { ann.X = x; ann.Y = y; }
+                    PageRotated?.Invoke(snap.Page);
+                }
+            }
+        ));
     }
 
     public void RenumberPages()
@@ -378,7 +611,6 @@ public partial class MainViewModel : ObservableObject
             Pages[i].Index = i;
             Pages[i].DisplayNumber = i + 1;
             Pages[i].IsFirst = i == 0;
-            Pages[i].IsLast = i == Pages.Count - 1;
             foreach (var ann in Pages[i].Annotations)
                 ann.PageIndex = i;
         }
@@ -434,6 +666,26 @@ public partial class MainViewModel : ObservableObject
 
             if (PdfFilePath == null)
                 PdfFilePath = path;
+
+            var insertedPages = newPages.ToList();
+            int count = insertedPages.Count;
+            int insertAt = insertIndex;
+            UndoRedo.Push(new UndoEntry(
+                "Insert pages",
+                Undo: () =>
+                {
+                    for (int i = count - 1; i >= 0; i--)
+                        Pages.RemoveAt(insertAt + i);
+                    if (Pages.Count == 0) { PdfFilePath = null; BaseStatus = "Open a PDF to get started"; }
+                    else RenumberPages();
+                },
+                Redo: () =>
+                {
+                    for (int i = 0; i < count; i++)
+                        Pages.Insert(insertAt + i, insertedPages[i]);
+                    RenumberPages();
+                }
+            ));
         }
         catch (Exception ex)
         {
@@ -479,7 +731,7 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            var pageSources = Pages.Select(p => p.Source).ToList();
+            var pageSources = Pages.Select(p => (p.Source, p.RotationDegrees)).ToList();
             var progress = new Progress<int>(p =>
             {
                 BaseStatus = $"{verb}\u2026 {p}%";
@@ -541,9 +793,15 @@ public partial class MainViewModel : ObservableObject
                 Text = "Text", FontFamily = FontResolver.PdfFontNames[0],
                 HeightPt = h, WidthPt = w
             };
-            Pages[pageIndex].Annotations.Add(annotation);
+            page.Annotations.Add(annotation);
             SelectAnnotation(annotation);
             CurrentTool = ToolMode.Select;
+
+            UndoRedo.Push(new UndoEntry(
+                "Add text",
+                Undo: () => { page.Annotations.Remove(annotation); SelectAnnotation(null); },
+                Redo: () => { page.Annotations.Add(annotation); SelectAnnotation(annotation); }
+            ));
         }
         else if (CurrentTool == ToolMode.Signature && SignatureSvgPath != null)
         {
@@ -575,13 +833,57 @@ public partial class MainViewModel : ObservableObject
                 RenderedBitmap = bitmap,
                 RenderedDpi = PdfConstants.RenderDpi
             };
-            Pages[pageIndex].Annotations.Add(annotation);
+            page.Annotations.Add(annotation);
             SelectAnnotation(annotation);
             CurrentTool = ToolMode.Select;
+
+            UndoRedo.Push(new UndoEntry(
+                "Add signature",
+                Undo: () => { page.Annotations.Remove(annotation); SelectAnnotation(null); },
+                Redo: () => { page.Annotations.Add(annotation); SelectAnnotation(annotation); }
+            ));
         }
         else
         {
             SelectAnnotation(null);
+        }
+    }
+
+    // --- Save page range ---
+
+    /// <summary>Saves a subset of pages. rangeSpec format: "3-7" (1-based inclusive).</summary>
+    [RelayCommand(CanExecute = nameof(CanSave))]
+    private async Task SavePageRange(string rangeSpec)
+    {
+        var parts = rangeSpec.Split('-');
+        if (parts.Length != 2 ||
+            !int.TryParse(parts[0], out int from) ||
+            !int.TryParse(parts[1], out int to)) return;
+        if (from < 1 || to > Pages.Count || from > to) return;
+
+        var baseName = PdfFilePath != null
+            ? Path.GetFileNameWithoutExtension(PdfFilePath)
+            : "document";
+        var suffix = from == to ? $"_p{from}" : $"_p{from}-{to}";
+
+        var outputPath = await _fileDialogs.PickSaveFileAsync(
+            $"Save pages {from}\u2013{to}", baseName + suffix, ".pdf", ["*.pdf"]);
+        if (outputPath == null) return;
+
+        try
+        {
+            var pagesInRange = Pages.Skip(from - 1).Take(to - from + 1)
+                .Select(p => (p.Source, p.RotationDegrees, p.OriginalWidthPt, p.OriginalHeightPt,
+                              (IEnumerable<Annotation>)p.Annotations));
+            PdfSaveService.Save(outputPath, pagesInRange);
+            BaseStatus = from == to
+                ? $"Page {from} saved to {Path.GetFileName(outputPath)}"
+                : $"Pages {from}\u2013{to} saved to {Path.GetFileName(outputPath)}";
+        }
+        catch (Exception ex)
+        {
+            BaseStatus = $"Save failed: {ex.Message}";
+            await _fileDialogs.ShowErrorAsync("Save Failed", ex.Message);
         }
     }
 
@@ -594,6 +896,150 @@ public partial class MainViewModel : ObservableObject
 
         if (annotation != null)
             annotation.IsSelected = true;
+    }
+
+    // --- Page selection ---
+
+    [ObservableProperty] private int _selectedPageCount;
+    private int _lastClickedPageIndex = -1;
+
+    public IReadOnlyList<PageItem> SelectedPages => Pages.Where(p => p.IsSelected).ToList();
+    public bool HasSelectedPages => SelectedPageCount > 0;
+
+    public void SelectPage(PageItem page, bool ctrl, bool shift)
+    {
+        if (shift && _lastClickedPageIndex >= 0)
+        {
+            ClearPageSelection();
+            int from = Math.Min(_lastClickedPageIndex, page.Index);
+            int to = Math.Max(_lastClickedPageIndex, page.Index);
+            for (int i = from; i <= to && i < Pages.Count; i++)
+                Pages[i].IsSelected = true;
+        }
+        else if (ctrl)
+        {
+            page.IsSelected = !page.IsSelected;
+            _lastClickedPageIndex = page.Index;
+        }
+        else
+        {
+            ClearPageSelection();
+            page.IsSelected = true;
+            _lastClickedPageIndex = page.Index;
+        }
+        UpdateSelectionState();
+    }
+
+    public void SelectAllPages()
+    {
+        foreach (var p in Pages) p.IsSelected = true;
+        UpdateSelectionState();
+    }
+
+    public void ClearPageSelection()
+    {
+        foreach (var p in Pages) p.IsSelected = false;
+        UpdateSelectionState();
+    }
+
+    public void UpdateSelectionState()
+    {
+        SelectedPageCount = Pages.Count(p => p.IsSelected);
+        OnPropertyChanged(nameof(HasSelectedPages));
+        SaveSelectedPagesCommand.NotifyCanExecuteChanged();
+        DeleteSelectedPagesCommand.NotifyCanExecuteChanged();
+        ExtractSelectedPagesCommand.NotifyCanExecuteChanged();
+        UpdateStatusText();
+    }
+
+    [RelayCommand(CanExecute = nameof(HasSelectedPages))]
+    private async Task SaveSelectedPages()
+    {
+        var selected = SelectedPages;
+        var defaultName = PdfFilePath != null
+            ? Path.GetFileNameWithoutExtension(PdfFilePath) + "_selected"
+            : "document_selected";
+
+        var outputPath = await _fileDialogs.PickSaveFileAsync("Save Selected Pages", defaultName, ".pdf", ["*.pdf"]);
+        if (outputPath == null) return;
+
+        var pagesWithAnnotations = selected
+            .Select(p => (p.Source, p.RotationDegrees, p.OriginalWidthPt, p.OriginalHeightPt,
+                          (IEnumerable<Annotation>)p.Annotations));
+
+        try
+        {
+            PdfSaveService.Save(outputPath, pagesWithAnnotations);
+            BaseStatus = $"Saved {selected.Count} page{(selected.Count != 1 ? "s" : "")} to {Path.GetFileName(outputPath)}";
+        }
+        catch (Exception ex)
+        {
+            BaseStatus = $"Save failed: {ex.Message}";
+            await _fileDialogs.ShowErrorAsync("Save Failed", ex.Message);
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(HasSelectedPages))]
+    private void DeleteSelectedPages()
+    {
+        var toRemove = SelectedPages.ToList();
+        var snapshots = toRemove.Select(p => (Page: p, Index: Pages.IndexOf(p))).OrderByDescending(x => x.Index).ToList();
+
+        if (SelectedAnnotation != null && toRemove.Any(p => p.Annotations.Contains(SelectedAnnotation)))
+            SelectAnnotation(null);
+
+        foreach (var (page, _) in snapshots)
+            Pages.Remove(page);
+
+        if (Pages.Count == 0) { PdfFilePath = null; BaseStatus = "Open a PDF to get started"; }
+        else RenumberPages();
+        PageStructureChanged?.Invoke();
+
+        UndoRedo.Push(new UndoEntry(
+            "Delete selected pages",
+            Undo: () =>
+            {
+                foreach (var (page, idx) in snapshots.OrderBy(x => x.Index))
+                    Pages.Insert(idx, page);
+                RenumberPages();
+                PageStructureChanged?.Invoke();
+            },
+            Redo: () =>
+            {
+                foreach (var (page, _) in snapshots)
+                    Pages.Remove(page);
+                if (Pages.Count == 0) { PdfFilePath = null; BaseStatus = "Open a PDF to get started"; }
+                else RenumberPages();
+                PageStructureChanged?.Invoke();
+            }
+        ));
+    }
+
+    [RelayCommand(CanExecute = nameof(HasSelectedPages))]
+    private async Task ExtractSelectedPages()
+    {
+        var selected = SelectedPages;
+        var defaultName = PdfFilePath != null
+            ? Path.GetFileNameWithoutExtension(PdfFilePath) + "_extract"
+            : "extract";
+
+        var outputPath = await _fileDialogs.PickSaveFileAsync("Extract Selected Pages", defaultName, ".pdf", ["*.pdf"]);
+        if (outputPath == null) return;
+
+        var pagesWithAnnotations = selected
+            .Select(p => (p.Source, p.RotationDegrees, p.OriginalWidthPt, p.OriginalHeightPt,
+                          (IEnumerable<Annotation>)p.Annotations));
+
+        try
+        {
+            PdfSaveService.Save(outputPath, pagesWithAnnotations);
+            BaseStatus = $"Extracted {selected.Count} page{(selected.Count != 1 ? "s" : "")} to {Path.GetFileName(outputPath)}";
+        }
+        catch (Exception ex)
+        {
+            BaseStatus = $"Extract failed: {ex.Message}";
+            await _fileDialogs.ShowErrorAsync("Extract Failed", ex.Message);
+        }
     }
 
 }

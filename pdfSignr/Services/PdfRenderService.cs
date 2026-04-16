@@ -24,10 +24,17 @@ public static class PdfRenderService
             .Select(s => ((double)s.Width, (double)s.Height))
             .ToList();
 
-    /// <summary>Renders a single page to an Avalonia bitmap at the given DPI.</summary>
-    public static Avalonia.Media.Imaging.Bitmap RenderPage(byte[] pdfBytes, int pageIndex, int dpi)
+    /// <summary>Renders a single page to an Avalonia bitmap at the given DPI, with optional rotation.</summary>
+    public static Avalonia.Media.Imaging.Bitmap RenderPage(byte[] pdfBytes, int pageIndex, int dpi, int rotationDegrees = 0)
     {
-        using var skBitmap = Conversion.ToImage(pdfBytes, page: pageIndex, options: new(Dpi: dpi));
+        var rotation = rotationDegrees switch
+        {
+            90  => PdfRotation.Rotate90,
+            180 => PdfRotation.Rotate180,
+            270 => PdfRotation.Rotate270,
+            _   => PdfRotation.Rotate0
+        };
+        using var skBitmap = Conversion.ToImage(pdfBytes, page: pageIndex, options: new(Dpi: dpi, Rotation: rotation));
         return BitmapConvert.ToAvaloniaBitmap(skBitmap);
     }
 }

@@ -23,9 +23,33 @@
             <Button Classes="icon-btn" Command="{Binding OpenCommand}" ToolTip.Tip="Open PDF (Ctrl+O)">
               <PathIcon Data="{iconr:IconGeometry Icon=folder_open}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
             </Button>
-            <Button Classes="icon-btn" Command="{Binding SaveCommand}" ToolTip.Tip="Save (Ctrl+S)">
+            <Button Classes="icon-btn" ToolTip.Tip="Save (Ctrl+S)">
+              <Button.Flyout>
+                <Flyout Placement="Right">
+                  <StackPanel Width="200" Spacing="6">
+                    <Button Classes="flyout-btn" Content="Save all pages"
+                            Command="{Binding SaveCommand}" />
+                    <Button Classes="flyout-btn" Content="Save selected pages"
+                            Command="{Binding SaveSelectedPagesCommand}"
+                            IsVisible="{Binding HasSelectedPages}" />
+                    <Border Height="1" Background="{DynamicResource SystemControlForegroundBaseLowBrush}" Margin="0,2" />
+                    <TextBlock Text="Save page range" FontSize="11" FontWeight="SemiBold" Opacity="0.6" />
+                    <TextBox x:Name="SaveRangeBox" PlaceholderText="e.g. 1-5" FontSize="12" />
+                    <Button Classes="flyout-btn" Content="Save range"
+                            x:Name="SaveRangeBtn" Click="OnSaveRangeClick" />
+                  </StackPanel>
+                </Flyout>
+              </Button.Flyout>
               <PathIcon Data="{iconr:IconGeometry Icon=floppy_disk}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
             </Button>
+            <Border Height="1" Background="{DynamicResource SystemControlForegroundBaseLowBrush}" Margin="2,5" />
+            <Button Classes="icon-btn" Command="{Binding UndoCommand}" ToolTip.Tip="Undo (Ctrl+Z)">
+              <PathIcon Data="{iconr:IconGeometry Icon=arrow_counter_clockwise}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
+            </Button>
+            <Button Classes="icon-btn" Command="{Binding RedoCommand}" ToolTip.Tip="Redo (Ctrl+Y)">
+              <PathIcon Data="{iconr:IconGeometry Icon=arrow_clockwise}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
+            </Button>
+            <Border Height="1" Background="{DynamicResource SystemControlForegroundBaseLowBrush}" Margin="2,5" />
             <Button Classes="icon-btn" ToolTip.Tip="Compress / Rasterize PDF">
               <Button.Flyout>
                 <Flyout Placement="Right">
@@ -63,7 +87,15 @@
             </ToggleButton>
           </StackPanel>
 
-          <StackPanel DockPanel.Dock="Bottom" HorizontalAlignment="Center">
+          <StackPanel DockPanel.Dock="Bottom" Spacing="2" HorizontalAlignment="Center">
+            <Button Classes="icon-btn" ToolTip.Tip="Keyboard shortcuts">
+              <Button.Flyout>
+                <Flyout Placement="Right">
+                  <StackPanel x:Name="KeyBindingsFlyout" Width="260" Spacing="2" />
+                </Flyout>
+              </Button.Flyout>
+              <PathIcon Data="{iconr:IconGeometry Icon=question}" Foreground="{DynamicResource IconForeground}" Width="20" Height="20" />
+            </Button>
             <Button Classes="icon-btn" x:Name="ThemeToggle"
                     Click="OnThemeToggle" ToolTip.Tip="Toggle dark/light mode">
               <PathIcon x:Name="ThemeIcon"
@@ -127,7 +159,8 @@
                     <!-- ═══ Insert zone BEFORE (list mode, first page only) ═══ -->
                     <Panel IsVisible="{Binding IsFirst}">
                       <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotGridMode}"
-                             MinHeight="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertGapHeight}">
+                             MinHeight="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertGapHeight}"
+                             ClipToBounds="True">
                         <Button Classes="insert-btn"
                                 IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotDragging}"
                                 Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertPagesBeforeCommand}"
@@ -142,95 +175,41 @@
                           <PathIcon Data="{iconr:IconGeometry Icon=plus_circle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
                         </Button>
                         <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsDraggingFile}"
-                               Width="240" Height="40" Margin="0,4" HorizontalAlignment="Center">
+                               HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="4,2">
                           <Rectangle StrokeDashArray="6,3"
                                      Stroke="{DynamicResource SystemControlForegroundBaseMediumBrush}"
-                                     StrokeThickness="1.5" RadiusX="8" RadiusY="8" />
-                          <TextBlock Text="Drop PDF to insert"
-                                     HorizontalAlignment="Center" VerticalAlignment="Center"
-                                     FontSize="11" Opacity="0.5" />
+                                     StrokeThickness="1.5" RadiusX="4" RadiusY="4" />
                         </Panel>
                         <Panel IsVisible="{Binding IsDropTargetBefore}"
-                               Width="240" Height="40" Margin="0,4" HorizontalAlignment="Center">
+                               HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="4,2">
                           <Rectangle StrokeDashArray="6,3" Stroke="{DynamicResource AccentBrush}"
-                                     StrokeThickness="2" RadiusX="8" RadiusY="8" />
-                          <TextBlock Text="Move page here"
-                                     HorizontalAlignment="Center" VerticalAlignment="Center"
-                                     FontSize="11" Foreground="{DynamicResource AccentBrush}" Opacity="0.8" />
+                                     StrokeThickness="2" RadiusX="4" RadiusY="4" />
                         </Panel>
                       </Panel>
                     </Panel>
 
                     <!-- ═══ PAGE ROW (buttons + page + insert zones) ═══ -->
                     <Panel>
+                    <Panel.ContextMenu>
+                      <ContextMenu>
+                        <MenuItem Header="Extract selected pages..."
+                                  Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).ExtractSelectedPagesCommand}"
+                                  IsEnabled="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).HasSelectedPages}" />
+                        <MenuItem Header="Delete selected pages"
+                                  Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).DeleteSelectedPagesCommand}"
+                                  IsEnabled="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).HasSelectedPages}" />
+                      </ContextMenu>
+                    </Panel.ContextMenu>
                     <Grid Margin="4,6">
                       <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>  <!-- C0: left buttons -->
-                        <ColumnDefinition Width="*"/>     <!-- C1: page -->
-                        <ColumnDefinition Width="Auto"/>  <!-- C2: right buttons -->
-                        <ColumnDefinition Width="Auto"/>  <!-- C3: vertical insert-after (grid) -->
+                        <ColumnDefinition Width="*"/>     <!-- C0: page -->
+                        <ColumnDefinition Width="Auto"/>  <!-- C1: vertical insert-after (grid) -->
                       </Grid.ColumnDefinitions>
 
-                      <!-- C0: Left buttons (LayoutTransform for proper spacing) -->
-                      <LayoutTransformControl Grid.Column="0">
-                        <LayoutTransformControl.LayoutTransform>
-                          <ScaleTransform
-                              ScaleX="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).ButtonScale}"
-                              ScaleY="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).ButtonScale}" />
-                        </LayoutTransformControl.LayoutTransform>
-                        <StackPanel Orientation="Vertical" Spacing="2"
-                                    HorizontalAlignment="Right" VerticalAlignment="Top"
-                                    Width="34" Margin="0,4,4,0">
-                          <!-- List mode: up/down arrows -->
-                          <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotGridMode}">
-                            <Button Classes="reorder-btn"
-                                    IsVisible="{Binding !IsFirst}"
-                                    Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).MovePageUpCommand}"
-                                    CommandParameter="{Binding}"
-                                    ToolTip.Tip="Move page up">
-                              <PathIcon Data="{iconr:IconGeometry Icon=caret_up}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
-                            </Button>
-                          </Panel>
-                          <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotGridMode}">
-                            <Button Classes="reorder-btn"
-                                    IsVisible="{Binding !IsLast}"
-                                    Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).MovePageDownCommand}"
-                                    CommandParameter="{Binding}"
-                                    ToolTip.Tip="Move page down">
-                              <PathIcon Data="{iconr:IconGeometry Icon=caret_down}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
-                            </Button>
-                          </Panel>
-                          <!-- Grid mode: left/right arrows -->
-                          <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsGridMode}">
-                            <Button Classes="reorder-btn"
-                                    IsVisible="{Binding !IsFirst}"
-                                    Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).MovePageUpCommand}"
-                                    CommandParameter="{Binding}"
-                                    ToolTip.Tip="Move page left">
-                              <PathIcon Data="{iconr:IconGeometry Icon=caret_left}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
-                            </Button>
-                          </Panel>
-                          <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsGridMode}">
-                            <Button Classes="reorder-btn"
-                                    IsVisible="{Binding !IsLast}"
-                                    Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).MovePageDownCommand}"
-                                    CommandParameter="{Binding}"
-                                    ToolTip.Tip="Move page right">
-                              <PathIcon Data="{iconr:IconGeometry Icon=caret_right}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
-                            </Button>
-                          </Panel>
-                          <Border Height="4" />
-                          <Button Classes="reorder-btn"
-                                  Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).SaveSinglePageCommand}"
-                                  CommandParameter="{Binding}"
-                                  ToolTip.Tip="Save this page as PDF">
-                            <PathIcon Data="{iconr:IconGeometry Icon=floppy_disk}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14" />
-                          </Button>
-                        </StackPanel>
-                      </LayoutTransformControl>
-
-                      <!-- C1: Page -->
-                      <Panel Grid.Column="1">
+                      <!-- C0: Page -->
+                      <Panel Grid.Column="0">
+                        <Border Classes="page-select" Classes.selected="{Binding IsSelected}"
+                                BorderThickness="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).SelectionBorderThickness}">
                         <Border BoxShadow="{DynamicResource PageShadow}" Background="{DynamicResource PageSurfaceBrush}">
                           <views:PageCanvas
                               PageBitmap="{Binding Bitmap}"
@@ -239,6 +218,7 @@
                               PageHeightPt="{Binding HeightPt}"
                               Annotations="{Binding Annotations}"
                               PlacementCursor="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).PlacementCursor}" />
+                        </Border>
                         </Border>
                         <!-- Page number overlay (grid mode only) -->
                         <Border IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsGridMode}"
@@ -250,34 +230,8 @@
                         </Border>
                       </Panel>
 
-                      <!-- C2: Right buttons (LayoutTransform for proper spacing) -->
-                      <LayoutTransformControl Grid.Column="2">
-                        <LayoutTransformControl.LayoutTransform>
-                          <ScaleTransform
-                              ScaleX="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).ButtonScale}"
-                              ScaleY="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).ButtonScale}" />
-                        </LayoutTransformControl.LayoutTransform>
-                        <StackPanel Orientation="Vertical" Spacing="2"
-                                    HorizontalAlignment="Left" VerticalAlignment="Top"
-                                    Width="34" Margin="4,4,0,0">
-                          <Button Classes="reorder-btn"
-                                  Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).RemovePageCommand}"
-                                  CommandParameter="{Binding}"
-                                  ToolTip.Tip="Remove this page">
-                            <PathIcon Data="{iconr:IconGeometry Icon=trash}" Foreground="{DynamicResource DangerForeground}" Width="14" Height="14" />
-                          </Button>
-                          <Border Classes="drag-handle"
-                                  ToolTip.Tip="Drag to reorder"
-                                  Cursor="SizeAll"
-                                  PointerPressed="OnDragHandlePressed">
-                            <PathIcon Data="{iconr:IconGeometry Icon=arrows_out_cardinal}" Foreground="{DynamicResource IconForegroundBright}" Width="14" Height="14"
-                                      HorizontalAlignment="Center" VerticalAlignment="Center" />
-                          </Border>
-                        </StackPanel>
-                      </LayoutTransformControl>
-
-                      <!-- C3: Grid mode vertical insert-after zone -->
-                      <LayoutTransformControl Grid.Column="3"
+                      <!-- C1: Grid mode vertical insert-after zone -->
+                      <LayoutTransformControl Grid.Column="1"
                              IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsGridMode}">
                         <LayoutTransformControl.LayoutTransform>
                           <ScaleTransform
@@ -318,7 +272,8 @@
 
                     <!-- ═══ Insert zone AFTER (list mode only) ═══ -->
                     <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotGridMode}"
-                           MinHeight="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertGapHeight}">
+                           MinHeight="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertGapHeight}"
+                           ClipToBounds="True">
                       <Button Classes="insert-btn"
                               IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotDragging}"
                               Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertPagesAfterCommand}"
@@ -333,21 +288,15 @@
                         <PathIcon Data="{iconr:IconGeometry Icon=plus_circle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
                       </Button>
                       <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsDraggingFile}"
-                             Width="240" Height="40" Margin="0,4" HorizontalAlignment="Center">
+                             HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="4,2">
                         <Rectangle StrokeDashArray="6,3"
                                    Stroke="{DynamicResource SystemControlForegroundBaseMediumBrush}"
-                                   StrokeThickness="1.5" RadiusX="8" RadiusY="8" />
-                        <TextBlock Text="Drop PDF to insert"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                   FontSize="11" Opacity="0.5" />
+                                   StrokeThickness="1.5" RadiusX="4" RadiusY="4" />
                       </Panel>
                       <Panel IsVisible="{Binding IsDropTargetAfter}"
-                             Width="240" Height="40" Margin="0,4" HorizontalAlignment="Center">
+                             HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="4,2">
                         <Rectangle StrokeDashArray="6,3" Stroke="{DynamicResource AccentBrush}"
-                                   StrokeThickness="2" RadiusX="8" RadiusY="8" />
-                        <TextBlock Text="Move page here"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                   FontSize="11" Foreground="{DynamicResource AccentBrush}" Opacity="0.8" />
+                                   StrokeThickness="2" RadiusX="4" RadiusY="4" />
                       </Panel>
                     </Panel>
 
