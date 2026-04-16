@@ -314,25 +314,35 @@ public partial class MainWindow : Window
             .Select(p => (Page: p, p.Source.PdfBytes, p.Source.SourcePageIndex))
             .ToList();
 
-        foreach (var (page, pdfBytes, srcIdx) in pagesToRender)
+        // Render in parallel — each page is independent.
+        // Continuations run on the UI thread so bitmap swaps are safe.
+        var renderTasks = pagesToRender.Select(async item =>
         {
-            if (cts.Token.IsCancellationRequested) return;
-
-            var bitmap = await Task.Run(
-                () => PdfRenderService.RenderPage(pdfBytes, srcIdx, dpi),
-                cts.Token);
-
-            if (cts.Token.IsCancellationRequested)
+            var (page, pdfBytes, srcIdx) = item;
+            try
             {
-                bitmap.Dispose();
-                return;
-            }
+                var bitmap = await Task.Run(
+                    () => PdfRenderService.RenderPage(pdfBytes, srcIdx, dpi),
+                    cts.Token);
 
-            var old = page.Bitmap;
-            page.Bitmap = bitmap;
-            old?.Dispose();
-            _pageDpi[page.Index] = dpi;
-        }
+                if (cts.Token.IsCancellationRequested)
+                {
+                    bitmap.Dispose();
+                    return;
+                }
+
+                var old = page.Bitmap;
+                page.Bitmap = bitmap;
+                old?.Dispose();
+                _pageDpi[page.Index] = dpi;
+            }
+            catch (OperationCanceledException) { }
+        });
+
+        try { await Task.WhenAll(renderTasks); }
+        catch (OperationCanceledException) { return; }
+
+        if (cts.Token.IsCancellationRequested) return;
 
         // Re-render annotation bitmaps on visible pages at the target DPI
         var annotations = ViewModel.Pages
@@ -342,14 +352,18 @@ public partial class MainWindow : Window
             .Where(a => a.RenderedBitmap != null && a.RenderedDpi != dpi)
             .ToList();
 
-        foreach (var ann in annotations)
+        var annTasks = annotations.Select(async ann =>
         {
-            if (cts.Token.IsCancellationRequested) return;
+            try
+            {
+                if (cts.Token.IsCancellationRequested) return;
+                await Task.Run(() => ann.ReRender(dpi), cts.Token);
+            }
+            catch (OperationCanceledException) { }
+        });
 
-            await Task.Run(() => ann.ReRender(dpi), cts.Token);
-
-            if (cts.Token.IsCancellationRequested) return;
-        }
+        try { await Task.WhenAll(annTasks); }
+        catch (OperationCanceledException) { }
     }
 
 
@@ -673,12 +687,12 @@ public partial class MainWindow : Window
 
         if (ViewModel.Pages.Count == 0)
         {
-            ViewModel.LoadPdf(path);
+            _ = ViewModel.LoadPdfAsync(path);
         }
         else
         {
             int insertIndex = FindInsertionIndex(e.GetPosition(PdfScrollViewer));
-            ViewModel.InsertPagesFromFile(path, insertIndex);
+            _ = ViewModel.InsertPagesFromFileAsync(path, insertIndex);
         }
     }
 
@@ -740,7 +754,7 @@ public partial class MainWindow : Window
 
     private void OnPdfLoaded()
     {
-        // Mark all pages as rendered at the base DPI (initial load renders at RenderDpi)
+        // Pages arrive fully rendered at RenderDpi
         _pageDpi.Clear();
         _targetDpi = MainViewModel.RenderDpi;
         foreach (var page in ViewModel.Pages)

@@ -18,6 +18,12 @@ public static class PdfRenderService
         return (size.Width, size.Height);
     }
 
+    /// <summary>Returns all page dimensions in a single document open (much faster than per-page calls for large files).</summary>
+    public static IReadOnlyList<(double WidthPt, double HeightPt)> GetAllPageSizes(byte[] pdfBytes)
+        => Conversion.GetPageSizes(pdfBytes)
+            .Select(s => ((double)s.Width, (double)s.Height))
+            .ToList();
+
     /// <summary>Renders a single page to an Avalonia bitmap at the given DPI.</summary>
     public static Avalonia.Media.Imaging.Bitmap RenderPage(byte[] pdfBytes, int pageIndex, int dpi)
     {

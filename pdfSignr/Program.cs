@@ -11,10 +11,12 @@ class Program
     }
 
     public static AppBuilder BuildAvaloniaApp()
-        => AppBuilder.Configure<App>()
-            .UsePlatformDetect()
+    {
+        var builder = AppBuilder.Configure<App>()
+            .UsePlatformDetect();
 #if DEBUG
-            .WithDeveloperTools()
+        builder = builder.WithDeveloperTools().LogToTrace();
 #endif
-            .LogToTrace();
+        return builder;
+    }
 }

@@ -13,6 +13,7 @@
     <Description>Lightweight cross-platform PDF annotation and signing tool</Description>
     <Copyright>Copyright (c) 2026 pdfSignr Contributors</Copyright>
     <ApplicationIcon>Assets/signature_icon.ico</ApplicationIcon>
+    <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>
 
   <ItemGroup>

@@ -91,7 +91,17 @@ public partial class MainViewModel : ObservableObject
         Pages.CollectionChanged += OnPagesCollectionChanged;
     }
 
+    partial void OnPagesChanged(ObservableCollection<PageItem>? oldValue, ObservableCollection<PageItem> newValue)
+    {
+        if (oldValue != null) oldValue.CollectionChanged -= OnPagesCollectionChanged;
+        newValue.CollectionChanged += OnPagesCollectionChanged;
+        NotifyCollectionDependents();
+    }
+
     private void OnPagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        => NotifyCollectionDependents();
+
+    private void NotifyCollectionDependents()
     {
         SaveCommand.NotifyCanExecuteChanged();
         CompressResampleCommand.NotifyCanExecuteChanged();
@@ -145,10 +155,10 @@ public partial class MainViewModel : ObservableObject
     {
         var path = await _fileDialogs.PickOpenFileAsync("Open PDF", ["*.pdf"]);
         if (path == null) return;
-        LoadPdf(path);
+        await LoadPdfAsync(path);
     }
 
-    public void LoadPdf(string path)
+    public async Task LoadPdfAsync(string path)
     {
         try
         {
@@ -159,43 +169,28 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
-            var pdfBytes = File.ReadAllBytes(path);
-            var pageCount = PdfRenderService.GetPageCount(pdfBytes);
+            var fileName = Path.GetFileName(path);
+            _baseStatus = $"Opening {fileName}\u2026";
+            UpdateStatusText();
 
-            // Render all pages into a temp list first — if any page fails,
-            // dispose everything and don't touch the current document state.
-            var newPages = new List<PageItem>(pageCount);
-            try
+            // All heavy work on the thread pool: read file, get sizes, render every page
+            var progress = new Progress<int>(pct =>
             {
-                for (int i = 0; i < pageCount; i++)
-                {
-                    var (w, h) = PdfRenderService.GetPageSize(pdfBytes, i);
-                    var bitmap = PdfRenderService.RenderPage(pdfBytes, i, RenderDpi);
-                    newPages.Add(new PageItem
-                    {
-                        Index = i, Bitmap = bitmap, WidthPt = w, HeightPt = h,
-                        Source = new PageSource(pdfBytes, i)
-                    });
-                }
-            }
-            catch
-            {
-                foreach (var p in newPages) p.DisposeResources();
-                throw;
-            }
+                _baseStatus = $"Opening {fileName}\u2026 {pct}%";
+                UpdateStatusText();
+            });
 
-            // All pages rendered successfully — now swap state
+            var newPages = await Task.Run(() => LoadPdfCore(path, progress));
+
+            // Dispose old pages, then swap the entire collection in one shot
             foreach (var page in Pages)
                 page.DisposeResources();
 
             PdfFilePath = path;
-            Pages.Clear();
             SelectAnnotation(null);
-            foreach (var p in newPages)
-                Pages.Add(p);
+            Pages = newPages;
 
-            RenumberPages();
-            _baseStatus = $"{Path.GetFileName(path)} \u2014 {pageCount} page{(pageCount != 1 ? "s" : "")}";
+            _baseStatus = $"{fileName} \u2014 {newPages.Count} page{(newPages.Count != 1 ? "s" : "")}";
             UpdateStatusText();
             PdfLoaded?.Invoke();
         }
@@ -205,6 +200,39 @@ public partial class MainViewModel : ObservableObject
             UpdateStatusText();
             _ = _fileDialogs.ShowErrorAsync("Failed to Open", ex.Message);
         }
+    }
+
+    private static ObservableCollection<PageItem> LoadPdfCore(string path, IProgress<int> progress)
+    {
+        var pdfBytes = File.ReadAllBytes(path);
+        var sizes = PdfRenderService.GetAllPageSizes(pdfBytes);
+        int count = sizes.Count;
+
+        // Pre-allocate items with metadata (fast)
+        var items = new PageItem[count];
+        for (int i = 0; i < count; i++)
+        {
+            var (w, h) = sizes[i];
+            items[i] = new PageItem
+            {
+                Index = i, DisplayNumber = i + 1,
+                IsFirst = i == 0, IsLast = i == count - 1,
+                Bitmap = null, WidthPt = w, HeightPt = h,
+                Source = new PageSource(pdfBytes, i)
+            };
+        }
+
+        // Render all pages in parallel across available cores
+        int done = 0;
+        Parallel.For(0, count, i =>
+        {
+            items[i].Bitmap = PdfRenderService.RenderPage(pdfBytes, i, RenderDpi);
+            var pct = Interlocked.Increment(ref done) * 100 / count;
+            progress.Report(pct);
+        });
+
+        var collection = new ObservableCollection<PageItem>(items);
+        return collection;
     }
 
     [RelayCommand(CanExecute = nameof(CanSave))]
@@ -398,10 +426,10 @@ public partial class MainViewModel : ObservableObject
         var path = await _fileDialogs.PickOpenFileAsync("Insert PDF Pages", ["*.pdf"]);
         if (path == null) return;
 
-        InsertPagesFromFile(path, insertIndex);
+        await InsertPagesFromFileAsync(path, insertIndex);
     }
 
-    public void InsertPagesFromFile(string path, int insertIndex)
+    public async Task InsertPagesFromFileAsync(string path, int insertIndex)
     {
         try
         {
@@ -412,34 +440,35 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
-            var pdfBytes = File.ReadAllBytes(path);
-            var pageCount = PdfRenderService.GetPageCount(pdfBytes);
-
-            // Render all pages into a temp list first to avoid partial insertion on failure
-            var newPages = new List<PageItem>(pageCount);
-            try
+            // All heavy work on the thread pool
+            var newPages = await Task.Run(() =>
             {
-                for (int i = 0; i < pageCount; i++)
+                var pdfBytes = File.ReadAllBytes(path);
+                var sizes = PdfRenderService.GetAllPageSizes(pdfBytes);
+                int count = sizes.Count;
+
+                var items = new PageItem[count];
+                for (int i = 0; i < count; i++)
                 {
-                    var (w, h) = PdfRenderService.GetPageSize(pdfBytes, i);
-                    var bitmap = PdfRenderService.RenderPage(pdfBytes, i, RenderDpi);
-                    newPages.Add(new PageItem
+                    var (w, h) = sizes[i];
+                    items[i] = new PageItem
                     {
                         Index = insertIndex + i,
-                        Bitmap = bitmap,
-                        WidthPt = w,
-                        HeightPt = h,
+                        Bitmap = null,
+                        WidthPt = w, HeightPt = h,
                         Source = new PageSource(pdfBytes, i)
-                    });
+                    };
                 }
-            }
-            catch
-            {
-                foreach (var p in newPages) p.DisposeResources();
-                throw;
-            }
 
-            for (int i = 0; i < newPages.Count; i++)
+                Parallel.For(0, count, i =>
+                {
+                    items[i].Bitmap = PdfRenderService.RenderPage(pdfBytes, i, RenderDpi);
+                });
+
+                return items;
+            });
+
+            for (int i = 0; i < newPages.Length; i++)
                 Pages.Insert(insertIndex + i, newPages[i]);
 
             RenumberPages();
