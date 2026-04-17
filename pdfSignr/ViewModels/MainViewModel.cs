@@ -92,8 +92,10 @@ public partial class MainViewModel : ObservableObject
 
     public static string[] AvailableFonts => FontResolver.PdfFontNames;
 
-    // Set by MainWindow when zoom changes
+    // Set by MainWindow when zoom/scroll changes
     public int ZoomPercent { get; set; } = 100;
+    public int CurrentPageInView { get; set; } = 1;
+    private string? DocumentSizeText { get; set; }
 
     // Computed tool-active properties for Ribbon ToggleButton binding
     public bool IsTextToolActive => CurrentTool == ToolMode.Text;
@@ -146,7 +148,28 @@ public partial class MainViewModel : ObservableObject
         CompressRasterizeCommand.NotifyCanExecuteChanged();
         SavePageRangeCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasNoPages));
+        UpdateDocumentSize();
     }
+
+    private void UpdateDocumentSize()
+    {
+        if (Pages.Count == 0) { DocumentSizeText = null; UpdateStatusText(); return; }
+        var seen = new HashSet<byte[]>(ReferenceEqualityComparer.Instance);
+        long total = 0;
+        foreach (var page in Pages)
+            if (seen.Add(page.Source.PdfBytes))
+                total += page.Source.PdfBytes.Length;
+        DocumentSizeText = FormatFileSize(total);
+        UpdateStatusText();
+    }
+
+    internal static string FormatFileSize(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:F1} KB",
+        < 1024L * 1024 * 1024 => $"{bytes / (1024.0 * 1024):F1} MB",
+        _ => $"{bytes / (1024.0 * 1024 * 1024):F1} GB"
+    };
 
     partial void OnSelectedAnnotationChanged(Annotation? oldValue, Annotation? newValue)
     {
@@ -168,8 +191,10 @@ public partial class MainViewModel : ObservableObject
                                (s.Rotation != 0 ? $"  {s.Rotation:F0}\u00b0" : ""),
             _ => ""
         };
+        var sizeInfo = DocumentSizeText != null ? $"  \u2502  {DocumentSizeText}" : "";
+        var pagePos = Pages.Count > 0 ? $"  \u2502  Page {CurrentPageInView} of {Pages.Count}" : "";
         var selInfo = SelectedPageCount > 1 ? $"  \u2502  {SelectedPageCount} pages selected" : "";
-        StatusText = $"{_baseStatus}{info}{selInfo}  \u2502  {ZoomPercent}%";
+        StatusText = $"{_baseStatus}{sizeInfo}{pagePos}{info}{selInfo}  \u2502  {ZoomPercent}%";
     }
 
     // CanSave depends on Pages.Count, not PdfFilePath — notifications are in OnPagesCollectionChanged

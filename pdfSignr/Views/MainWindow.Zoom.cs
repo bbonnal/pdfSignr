@@ -115,8 +115,19 @@ public partial class MainWindow
 
     private void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
     {
+        UpdateCurrentPageIndicator();
         RestartDebounce(ref _scrollTimer, TimeSpan.FromMilliseconds(200),
             () => _ = RerenderVisibleAsync());
+    }
+
+    private void UpdateCurrentPageIndicator()
+    {
+        var visible = GetVisiblePageIndices();
+        if (visible.Count > 0)
+        {
+            ViewModel.CurrentPageInView = visible.Min() + 1;
+            ViewModel.UpdateStatusText();
+        }
     }
 
     private static void RestartDebounce(ref DispatcherTimer? timer, TimeSpan interval, Action callback)
@@ -263,6 +274,7 @@ public partial class MainWindow
         Dispatcher.UIThread.Post(async () =>
         {
             FitToWidth();
+            UpdateCurrentPageIndicator();
             await RerenderVisibleAsync();
             try { await RenderRemainingPagesAsync(); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Background render failed: {ex.Message}"); }
