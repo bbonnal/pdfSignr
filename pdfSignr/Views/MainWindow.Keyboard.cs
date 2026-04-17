@@ -48,9 +48,9 @@ public partial class MainWindow
             else if (e.Key == Key.D0 || e.Key == Key.NumPad0)
             { FitToWidth(); e.Handled = true; }
             else if (e.Key == Key.OemPlus || e.Key == Key.Add)
-            { ApplyZoom(System.Math.Clamp(_zoom + ZoomStep, MinZoom, MaxZoom)); e.Handled = true; }
+            { ApplyZoom(ZoomIn()); e.Handled = true; }
             else if (e.Key == Key.OemMinus || e.Key == Key.Subtract)
-            { ApplyZoom(System.Math.Clamp(_zoom - ZoomStep, MinZoom, MaxZoom)); e.Handled = true; }
+            { ApplyZoom(ZoomOut()); e.Handled = true; }
             else if (e.Key == Key.Up)
             { SelectAdjacentPage(-1, addToSelection: true); e.Handled = true; }
             else if (e.Key == Key.Down)
@@ -146,9 +146,9 @@ public partial class MainWindow
         else if (e.Key == Key.D0 || e.Key == Key.NumPad0)
         { FitToWidth(); e.Handled = true; }
         else if (e.Key == Key.OemPlus || e.Key == Key.Add)
-        { ApplyZoom(System.Math.Clamp(_zoom + ZoomStep, MinZoom, MaxZoom)); e.Handled = true; }
+        { ApplyZoom(ZoomIn()); e.Handled = true; }
         else if (e.Key == Key.OemMinus || e.Key == Key.Subtract)
-        { ApplyZoom(System.Math.Clamp(_zoom - ZoomStep, MinZoom, MaxZoom)); e.Handled = true; }
+        { ApplyZoom(ZoomOut()); e.Handled = true; }
     }
 
     // ═══ Navigation helpers ═══

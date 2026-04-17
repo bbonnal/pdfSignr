@@ -25,13 +25,15 @@ public partial class MainWindow
     // Fixed arrow column width in layout units (scales with zoom like the page)
     private const double ArrowColumnLayoutWidth = 34;
 
+    private double ZoomIn() => System.Math.Clamp(_zoom * ZoomFactor, MinZoom, MaxZoom);
+    private double ZoomOut() => System.Math.Clamp(_zoom / ZoomFactor, MinZoom, MaxZoom);
+
     private void OnScrollWheel(object? sender, PointerWheelEventArgs e)
     {
         if (!e.KeyModifiers.HasFlag(KeyModifiers.Control)) return;
 
-        double step = e.Delta.Y > 0 ? ZoomStep : -ZoomStep;
-        var cursorInViewport = e.GetPosition(PdfScrollViewer);
-        ApplyZoom(System.Math.Clamp(_zoom + step, MinZoom, MaxZoom), cursorInViewport);
+        double newZoom = e.Delta.Y > 0 ? ZoomIn() : ZoomOut();
+        ApplyZoom(newZoom, e.GetPosition(PdfScrollViewer));
         e.Handled = true;
     }
 
@@ -373,6 +375,6 @@ public partial class MainWindow
     // ═══ Zoom buttons ═══
 
     private void OnFitToWidth(object? sender, RoutedEventArgs e) => FitToWidth();
-    private void OnZoomIn(object? sender, RoutedEventArgs e) => ApplyZoom(System.Math.Clamp(_zoom + ZoomStep, MinZoom, MaxZoom));
-    private void OnZoomOut(object? sender, RoutedEventArgs e) => ApplyZoom(System.Math.Clamp(_zoom - ZoomStep, MinZoom, MaxZoom));
+    private void OnZoomIn(object? sender, RoutedEventArgs e) => ApplyZoom(ZoomIn());
+    private void OnZoomOut(object? sender, RoutedEventArgs e) => ApplyZoom(ZoomOut());
 }

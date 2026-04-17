@@ -15,7 +15,7 @@ namespace pdfSignr.Views;
 
 public partial class MainWindow : Window
 {
-    private const double ZoomStep = 0.1;
+    private const double ZoomFactor = 1.1; // 10% per step, multiplicative
     private const double MinZoom = 0.1;
     private const double MaxZoom = 5.0;
     private const double FitToWidthPadding = 40;
