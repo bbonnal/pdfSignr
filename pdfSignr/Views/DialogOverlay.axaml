@@ -1,0 +1,38 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="pdfSignr.Views.DialogOverlay"
+             IsVisible="False">
+
+  <Panel>
+    <!-- Backdrop dims the window and blocks interaction -->
+    <Border x:Name="Backdrop" Background="#80000000" IsHitTestVisible="True" />
+
+    <!-- Dialog card -->
+    <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+            Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
+            BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+            BorderThickness="1" CornerRadius="8"
+            BoxShadow="{DynamicResource EditorShadow}"
+            Width="340">
+      <StackPanel Margin="24,20,24,20" Spacing="4">
+        <TextBlock x:Name="TitleText" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,4" />
+        <TextBlock x:Name="MessageText" FontSize="13" TextWrapping="Wrap" Opacity="0.8" Margin="0,0,0,8" />
+
+        <!-- Error hint (password retry) -->
+        <TextBlock x:Name="ErrorText" FontSize="12" Foreground="IndianRed"
+                   IsVisible="False" Margin="0,0,0,4" />
+
+        <!-- Input field (text or password) -->
+        <TextBox x:Name="InputBox" FontSize="13" Margin="0,0,0,12" IsVisible="False" />
+
+        <!-- Password reveal toggle -->
+        <CheckBox x:Name="RevealCheck" Content="Show password" FontSize="11"
+                  Margin="0,0,0,12" IsVisible="False" />
+
+        <!-- Buttons -->
+        <StackPanel x:Name="ButtonPanel" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Spacing="8" />
+      </StackPanel>
+    </Border>
+  </Panel>
+</UserControl>

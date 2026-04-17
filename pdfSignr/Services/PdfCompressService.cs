@@ -17,8 +17,15 @@ public record CompressResult(long OriginalSize, long CompressedSize, int PageCou
 
 [SuppressMessage("Interoperability", "CA1416:Validate platform compatibility")]
 /// <summary>Compresses PDF files by resampling embedded images or rasterizing pages.</summary>
-public static class PdfCompressService
+public class PdfCompressService : IPdfCompressService
 {
+    private readonly IPdfRenderService _renderService;
+
+    public PdfCompressService(IPdfRenderService renderService)
+    {
+        _renderService = renderService;
+    }
+
     private record PresetConfig(int ResampleMaxDim, int ResampleQuality, int RasterDpi, int RasterQuality);
 
     private static PresetConfig GetPreset(CompressionPreset preset) => preset switch
@@ -40,10 +47,11 @@ public static class PdfCompressService
     }
 
     /// <summary>Compresses a PDF by resampling embedded images that exceed the preset dimensions.</summary>
-    public static async Task<CompressResult> CompressAsync(
+    public async Task<CompressResult> CompressAsync(
         IReadOnlyList<(PageSource Source, int RotationDegrees)> pageSources,
         string outputPath,
         CompressionPreset preset,
+        string? outputPassword = null,
         IProgress<int>? progress = null,
         CancellationToken ct = default)
     {
@@ -64,7 +72,9 @@ public static class PdfCompressService
                     ct.ThrowIfCancellationRequested();
                     if (!sourceDocCache.TryGetValue(source.PdfBytes, out var sourceDoc))
                     {
-                        sourceDoc = PdfReader.Open(new MemoryStream(source.PdfBytes), PdfDocumentOpenMode.Import);
+                        sourceDoc = string.IsNullOrEmpty(source.Password)
+                            ? PdfReader.Open(new MemoryStream(source.PdfBytes), PdfDocumentOpenMode.Import)
+                            : PdfReader.Open(new MemoryStream(source.PdfBytes), source.Password, PdfDocumentOpenMode.Import);
                         sourceDocCache[source.PdfBytes] = sourceDoc;
                     }
                     var page = outputDoc.AddPage(sourceDoc.Pages[source.SourcePageIndex]);
@@ -96,6 +106,13 @@ public static class PdfCompressService
                 }
 
                 progress?.Report(100);
+
+                if (!string.IsNullOrEmpty(outputPassword))
+                {
+                    outputDoc.SecuritySettings.UserPassword = outputPassword;
+                    outputDoc.SecuritySettings.OwnerPassword = outputPassword;
+                }
+
                 outputDoc.Save(outputPath);
                 var compressedSize = new FileInfo(outputPath).Length;
                 return new CompressResult(originalSize, compressedSize, pageSources.Count, imagesResampled);
@@ -179,15 +196,26 @@ public static class PdfCompressService
         if (filter is "/DCTDecode" or "/DCT")
             return streamBytes; // Already JPEG, SkiaSharp can decode directly
 
-        // Try to get unfiltered bytes via PDFsharp
+        // Try to get unfiltered bytes via PDFsharp — work on a copy to avoid mutating the original
         if (dict.Stream != null)
         {
             try
             {
+                var copy = (byte[])streamBytes.Clone();
+                var original = dict.Stream.Value;
+                dict.Stream.Value = copy;
                 if (dict.Stream.TryUncompress())
-                    return dict.Stream.Value;
+                {
+                    var uncompressed = dict.Stream.Value;
+                    dict.Stream.Value = original; // restore original stream
+                    return uncompressed;
+                }
+                dict.Stream.Value = original; // restore original stream
             }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Image decode fallback: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Image decode fallback: {ex.Message}");
+            }
         }
 
         return streamBytes;
@@ -209,33 +237,41 @@ public static class PdfCompressService
         if (colorSpace == "/DeviceRGB" && bpc == 8 && imageBytes.Length >= width * height * 3)
         {
             var bmp = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Opaque);
-            var pixelData = new byte[width * height * 4];
-            int srcIdx = 0;
-            for (int i = 0; i < width * height; i++)
+            try
             {
-                pixelData[i * 4 + 0] = imageBytes[srcIdx++]; // R
-                pixelData[i * 4 + 1] = imageBytes[srcIdx++]; // G
-                pixelData[i * 4 + 2] = imageBytes[srcIdx++]; // B
-                pixelData[i * 4 + 3] = 255;                   // A
+                var pixelData = new byte[width * height * 4];
+                int srcIdx = 0;
+                for (int i = 0; i < width * height; i++)
+                {
+                    pixelData[i * 4 + 0] = imageBytes[srcIdx++]; // R
+                    pixelData[i * 4 + 1] = imageBytes[srcIdx++]; // G
+                    pixelData[i * 4 + 2] = imageBytes[srcIdx++]; // B
+                    pixelData[i * 4 + 3] = 255;                   // A
+                }
+                System.Runtime.InteropServices.Marshal.Copy(pixelData, 0, bmp.GetPixels(), pixelData.Length);
+                return bmp;
             }
-            System.Runtime.InteropServices.Marshal.Copy(pixelData, 0, bmp.GetPixels(), pixelData.Length);
-            return bmp;
+            catch { bmp.Dispose(); return null; }
         }
 
         if (colorSpace == "/DeviceGray" && bpc == 8 && imageBytes.Length >= width * height)
         {
             var bmp = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Opaque);
-            var pixelData = new byte[width * height * 4];
-            for (int i = 0; i < width * height; i++)
+            try
             {
-                byte g = imageBytes[i];
-                pixelData[i * 4 + 0] = g;
-                pixelData[i * 4 + 1] = g;
-                pixelData[i * 4 + 2] = g;
-                pixelData[i * 4 + 3] = 255;
+                var pixelData = new byte[width * height * 4];
+                for (int i = 0; i < width * height; i++)
+                {
+                    byte g = imageBytes[i];
+                    pixelData[i * 4 + 0] = g;
+                    pixelData[i * 4 + 1] = g;
+                    pixelData[i * 4 + 2] = g;
+                    pixelData[i * 4 + 3] = 255;
+                }
+                System.Runtime.InteropServices.Marshal.Copy(pixelData, 0, bmp.GetPixels(), pixelData.Length);
+                return bmp;
             }
-            System.Runtime.InteropServices.Marshal.Copy(pixelData, 0, bmp.GetPixels(), pixelData.Length);
-            return bmp;
+            catch { bmp.Dispose(); return null; }
         }
 
         // Try generic SKBitmap decode as last resort (handles PNG, JPEG, etc.)
@@ -243,10 +279,11 @@ public static class PdfCompressService
     }
 
     /// <summary>Rasterizes each PDF page to a JPEG image at the preset DPI, producing a flattened PDF.</summary>
-    public static async Task<CompressResult> RasterizeAsync(
+    public async Task<CompressResult> RasterizeAsync(
         IReadOnlyList<(PageSource Source, int RotationDegrees)> pageSources,
         string outputPath,
         CompressionPreset preset,
+        string? outputPassword = null,
         IProgress<int>? progress = null,
         CancellationToken ct = default)
     {
@@ -264,21 +301,15 @@ public static class PdfCompressService
                 ct.ThrowIfCancellationRequested();
 
                 var (source, rotDeg) = pageSources[i];
-                var (widthPt, heightPt) = PdfRenderService.GetPageSize(source.PdfBytes, source.SourcePageIndex);
+                var (widthPt, heightPt) = _renderService.GetPageSize(source.PdfBytes, source.SourcePageIndex, source.Password);
 
                 // Apply rotation to dimensions and rendering
-                var rotation = rotDeg switch
-                {
-                    90  => PdfRotation.Rotate90,
-                    180 => PdfRotation.Rotate180,
-                    270 => PdfRotation.Rotate270,
-                    _   => PdfRotation.Rotate0
-                };
+                var rotation = PdfConstants.ToPdfRotation(rotDeg);
                 double effectiveW = rotDeg is 90 or 270 ? heightPt : widthPt;
                 double effectiveH = rotDeg is 90 or 270 ? widthPt : heightPt;
 
                 using var skBitmap = Conversion.ToImage(
-                    source.PdfBytes, page: source.SourcePageIndex, options: new(Dpi: dpi, Rotation: rotation));
+                    source.PdfBytes, page: source.SourcePageIndex, password: source.Password, options: new(Dpi: dpi, Rotation: rotation));
                 using var jpegData = skBitmap.Encode(SKEncodedImageFormat.Jpeg, jpegQuality);
                 var jpegBytes = jpegData.ToArray();
 
@@ -292,6 +323,12 @@ public static class PdfCompressService
                 gfx.DrawImage(xImage, 0, 0, effectiveW, effectiveH);
 
                 progress?.Report((i + 1) * 100 / pageSources.Count);
+            }
+
+            if (!string.IsNullOrEmpty(outputPassword))
+            {
+                doc.SecuritySettings.UserPassword = outputPassword;
+                doc.SecuritySettings.OwnerPassword = outputPassword;
             }
 
             doc.Save(outputPath);

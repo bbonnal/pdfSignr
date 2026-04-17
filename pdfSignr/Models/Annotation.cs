@@ -84,7 +84,14 @@ public partial class SvgAnnotation : Annotation
     private double _svgHeightPt;
 
     public bool IsRaster { get; init; }
-    public Bitmap? RenderedBitmap { get; set; }
+
+    private Bitmap? _renderedBitmap;
+    public Bitmap? RenderedBitmap
+    {
+        get => _renderedBitmap;
+        set => SetProperty(ref _renderedBitmap, value);
+    }
+
     public int RenderedDpi { get; set; }
 
     public override double WidthPt
@@ -108,13 +115,19 @@ public partial class SvgAnnotation : Annotation
         old?.Dispose();
     }
 
-    /// <summary>Re-renders the display bitmap at the given DPI.</summary>
+    /// <summary>Re-renders the display bitmap at the given DPI. Call from any thread; swap is UI-safe.</summary>
     public void ReRender(int dpi)
     {
-        var bitmap = IsRaster
+        var bitmap = RenderBitmap(dpi);
+        ReplaceRenderedBitmap(bitmap, dpi);
+    }
+
+    /// <summary>Creates a new rendered bitmap at the given DPI. Thread-safe (no UI mutation).</summary>
+    public Bitmap RenderBitmap(int dpi)
+    {
+        return IsRaster
             ? SvgRenderService.ResampleForDisplay(SvgFilePath, WidthPt, HeightPt, dpi)
             : SvgRenderService.RenderForDisplay(SvgFilePath, Scale, dpi);
-        ReplaceRenderedBitmap(bitmap, dpi);
     }
 
     public override void Dispose()

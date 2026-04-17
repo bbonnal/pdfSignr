@@ -37,6 +37,9 @@
                     <TextBox x:Name="SaveRangeBox" PlaceholderText="e.g. 1-5" FontSize="12" />
                     <Button Classes="flyout-btn" Content="Save range"
                             x:Name="SaveRangeBtn" Click="OnSaveRangeClick" />
+                    <Border Height="1" Background="{DynamicResource SystemControlForegroundBaseLowBrush}" Margin="0,4" />
+                    <CheckBox x:Name="LockOnSaveCheck" Content="Lock with password" FontSize="12"
+                              IsChecked="{Binding LockOnSave}" />
                   </StackPanel>
                 </Flyout>
               </Button.Flyout>
@@ -158,56 +161,85 @@
 
                     <!-- ═══ Insert zone BEFORE (list mode, first page only) ═══ -->
                     <Panel IsVisible="{Binding IsFirst}">
-                      <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotGridMode}"
-                             MinHeight="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertGapHeight}"
-                             ClipToBounds="True">
-                        <Button Classes="insert-btn"
-                                IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotDragging}"
-                                Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertPagesBeforeCommand}"
-                                CommandParameter="{Binding}"
-                                ToolTip.Tip="Insert pages before"
-                                RenderTransformOrigin="50%,50%">
-                          <Button.RenderTransform>
-                            <ScaleTransform
-                                ScaleX="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).ButtonScale}"
-                                ScaleY="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).ButtonScale}" />
-                          </Button.RenderTransform>
-                          <PathIcon Data="{iconr:IconGeometry Icon=plus_circle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
-                        </Button>
-                        <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsDraggingFile}"
-                               HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="4,2">
-                          <Rectangle StrokeDashArray="6,3"
-                                     Stroke="{DynamicResource SystemControlForegroundBaseMediumBrush}"
-                                     StrokeThickness="1.5" RadiusX="4" RadiusY="4" />
+                      <LayoutTransformControl IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotGridMode}">
+                        <LayoutTransformControl.LayoutTransform>
+                          <ScaleTransform
+                              ScaleX="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).ButtonScale}"
+                              ScaleY="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).ButtonScale}" />
+                        </LayoutTransformControl.LayoutTransform>
+                        <Panel Height="28" Margin="0,2">
+                          <Button Classes="insert-btn"
+                                  IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotDragging}"
+                                  Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertPagesBeforeCommand}"
+                                  CommandParameter="{Binding}"
+                                  ToolTip.Tip="Insert pages before">
+                            <PathIcon Data="{iconr:IconGeometry Icon=plus_circle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
+                          </Button>
+                          <Border IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsDraggingFile}"
+                                  HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="4,2">
+                            <Rectangle StrokeDashArray="4,3"
+                                       Stroke="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                                       StrokeThickness="1.5" RadiusX="4" RadiusY="4" />
+                          </Border>
+                          <Border IsVisible="{Binding IsDropTargetBefore}"
+                                  HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                  Background="{DynamicResource AccentOverlayBrush}" CornerRadius="4" Margin="4,2">
+                            <Rectangle Stroke="{DynamicResource AccentBrush}" StrokeThickness="2"
+                                       StrokeDashArray="4,3" RadiusX="4" RadiusY="4" />
+                          </Border>
                         </Panel>
-                        <Panel IsVisible="{Binding IsDropTargetBefore}"
-                               HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="4,2">
-                          <Rectangle StrokeDashArray="6,3" Stroke="{DynamicResource AccentBrush}"
-                                     StrokeThickness="2" RadiusX="4" RadiusY="4" />
-                        </Panel>
-                      </Panel>
+                      </LayoutTransformControl>
                     </Panel>
 
                     <!-- ═══ PAGE ROW (buttons + page + insert zones) ═══ -->
-                    <Panel>
+                    <Panel Background="Transparent">
                     <Panel.ContextMenu>
                       <ContextMenu>
-                        <MenuItem Header="Extract selected pages..."
-                                  Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).ExtractSelectedPagesCommand}"
-                                  IsEnabled="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).HasSelectedPages}" />
-                        <MenuItem Header="Delete selected pages"
-                                  Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).DeleteSelectedPagesCommand}"
-                                  IsEnabled="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).HasSelectedPages}" />
+                        <MenuItem Header="Rotate clockwise"
+                                  Command="{Binding ParentVM.RotatePageCwCommand}"
+                                  CommandParameter="{Binding}" />
+                        <MenuItem Header="Rotate counter-clockwise"
+                                  Command="{Binding ParentVM.RotatePageCcwCommand}"
+                                  CommandParameter="{Binding}" />
+                        <Separator />
+                        <MenuItem Header="Move up"
+                                  Command="{Binding ParentVM.MovePageUpCommand}"
+                                  CommandParameter="{Binding}" />
+                        <MenuItem Header="Move down"
+                                  Command="{Binding ParentVM.MovePageDownCommand}"
+                                  CommandParameter="{Binding}" />
+                        <Separator />
+                        <MenuItem Header="Insert pages before..."
+                                  Command="{Binding ParentVM.InsertPagesBeforeCommand}"
+                                  CommandParameter="{Binding}" />
+                        <MenuItem Header="Insert pages after..."
+                                  Command="{Binding ParentVM.InsertPagesAfterCommand}"
+                                  CommandParameter="{Binding}" />
+                        <Separator />
+                        <MenuItem Header="Add text annotation"
+                                  Command="{Binding ParentVM.ToggleTextToolCommand}" />
+                        <MenuItem Header="Add signature"
+                                  Command="{Binding ParentVM.ToggleSignToolCommand}" />
+                        <Separator />
+                        <MenuItem Header="Save page..."
+                                  Command="{Binding ParentVM.SaveSelectedPagesCommand}" />
+                        <MenuItem Header="Delete page"
+                                  Command="{Binding ParentVM.DeleteSelectedPagesCommand}" />
                       </ContextMenu>
                     </Panel.ContextMenu>
-                    <Grid Margin="4,6">
+                    <Grid Margin="4,6" HorizontalAlignment="Center">
                       <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>     <!-- C0: page -->
+                        <ColumnDefinition Width="Auto"/>  <!-- C0: page -->
                         <ColumnDefinition Width="Auto"/>  <!-- C1: vertical insert-after (grid) -->
                       </Grid.ColumnDefinitions>
 
                       <!-- C0: Page -->
                       <Panel Grid.Column="0">
+                        <!-- Invisible outer hit-test border for easier drag grabbing -->
+                        <Border Classes="page-select-hit" Classes.selected="{Binding IsSelected}"
+                                BorderBrush="Transparent" BorderThickness="14" Margin="-14"
+                                IsHitTestVisible="True" Background="Transparent">
+                        <!-- Visible selection border (the blue outline) -->
                         <Border Classes="page-select" Classes.selected="{Binding IsSelected}"
                                 BorderThickness="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).SelectionBorderThickness}">
                         <Border BoxShadow="{DynamicResource PageShadow}" Background="{DynamicResource PageSurfaceBrush}">
@@ -218,6 +250,7 @@
                               PageHeightPt="{Binding HeightPt}"
                               Annotations="{Binding Annotations}"
                               PlacementCursor="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).PlacementCursor}" />
+                        </Border>
                         </Border>
                         </Border>
                         <!-- Page number overlay (grid mode only) -->
@@ -271,34 +304,34 @@
                     </Panel>
 
                     <!-- ═══ Insert zone AFTER (list mode only) ═══ -->
-                    <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotGridMode}"
-                           MinHeight="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertGapHeight}"
-                           ClipToBounds="True">
-                      <Button Classes="insert-btn"
-                              IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotDragging}"
-                              Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertPagesAfterCommand}"
-                              CommandParameter="{Binding}"
-                              ToolTip.Tip="Insert pages after"
-                              RenderTransformOrigin="50%,50%">
-                        <Button.RenderTransform>
-                          <ScaleTransform
-                              ScaleX="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).ButtonScale}"
-                              ScaleY="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).ButtonScale}" />
-                        </Button.RenderTransform>
-                        <PathIcon Data="{iconr:IconGeometry Icon=plus_circle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
-                      </Button>
-                      <Panel IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsDraggingFile}"
-                             HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="4,2">
-                        <Rectangle StrokeDashArray="6,3"
-                                   Stroke="{DynamicResource SystemControlForegroundBaseMediumBrush}"
-                                   StrokeThickness="1.5" RadiusX="4" RadiusY="4" />
+                    <LayoutTransformControl IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotGridMode}">
+                      <LayoutTransformControl.LayoutTransform>
+                        <ScaleTransform
+                            ScaleX="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).ButtonScale}"
+                            ScaleY="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).ButtonScale}" />
+                      </LayoutTransformControl.LayoutTransform>
+                      <Panel Height="28" Margin="0,2">
+                        <Button Classes="insert-btn"
+                                IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsNotDragging}"
+                                Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).InsertPagesAfterCommand}"
+                                CommandParameter="{Binding}"
+                                ToolTip.Tip="Insert pages after">
+                          <PathIcon Data="{iconr:IconGeometry Icon=plus_circle}" Foreground="{DynamicResource IconForegroundMuted}" Width="16" Height="16" />
+                        </Button>
+                        <Border IsVisible="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).IsDraggingFile}"
+                                HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="4,2">
+                          <Rectangle StrokeDashArray="4,3"
+                                     Stroke="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                                     StrokeThickness="1.5" RadiusX="4" RadiusY="4" />
+                        </Border>
+                        <Border IsVisible="{Binding IsDropTargetAfter}"
+                                HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                Background="{DynamicResource AccentOverlayBrush}" CornerRadius="4" Margin="4,2">
+                          <Rectangle Stroke="{DynamicResource AccentBrush}" StrokeThickness="2"
+                                     StrokeDashArray="4,3" RadiusX="4" RadiusY="4" />
+                        </Border>
                       </Panel>
-                      <Panel IsVisible="{Binding IsDropTargetAfter}"
-                             HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Margin="4,2">
-                        <Rectangle StrokeDashArray="6,3" Stroke="{DynamicResource AccentBrush}"
-                                   StrokeThickness="2" RadiusX="4" RadiusY="4" />
-                      </Panel>
-                    </Panel>
+                    </LayoutTransformControl>
 
                   </StackPanel>
                 </DataTemplate>
@@ -328,6 +361,9 @@
       </Panel>
 
     </DockPanel>
+
+    <!-- ═══ Reusable dialog overlay ═══ -->
+    <views:DialogOverlay x:Name="Dialog" />
 
     <!-- ═══ Inline text editor (positioned overlay) ═══ -->
     <Border x:Name="TextEditorOverlay" IsVisible="False"

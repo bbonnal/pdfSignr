@@ -154,7 +154,19 @@ public class PageCanvas : Control
         if (e.NewItems != null) foreach (Annotation a in e.NewItems) a.PropertyChanged += OnAnnChanged;
         InvalidateVisual();
     }
-    private void OnAnnChanged(object? s, PropertyChangedEventArgs e) => InvalidateVisual();
+    private void OnAnnChanged(object? s, PropertyChangedEventArgs e)
+    {
+        // Only invalidate for properties that affect rendering
+        if (e.PropertyName is nameof(Annotation.X) or nameof(Annotation.Y)
+            or nameof(Annotation.Rotation) or nameof(Annotation.IsSelected)
+            or nameof(TextAnnotation.Text) or nameof(TextAnnotation.FontFamily) or nameof(TextAnnotation.FontSize)
+            or nameof(Annotation.WidthPt) or nameof(Annotation.HeightPt)
+            or nameof(SvgAnnotation.RenderedBitmap) or nameof(SvgAnnotation.Scale)
+            or null) // null = multiple properties changed
+        {
+            InvalidateVisual();
+        }
+    }
 
     protected override Size MeasureOverride(Size availableSize)
     {
@@ -256,6 +268,11 @@ public class PageCanvas : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
+
+        // Let right-clicks bubble up to the ContextMenu on the parent Panel
+        if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed)
+            return;
+
         var pos = e.GetPosition(this);
 
         // 1) Check handles on selected annotation

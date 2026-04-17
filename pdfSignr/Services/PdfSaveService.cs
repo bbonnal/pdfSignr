@@ -6,25 +6,14 @@ using pdfSignr.Models;
 namespace pdfSignr.Services;
 
 /// <summary>Saves annotated PDF pages to disk using PDFsharp, embedding text and image annotations.</summary>
-public static class PdfSaveService
+public class PdfSaveService : IPdfSaveService
 {
-    /// <summary>Saves a single page with its annotations to a new PDF file.</summary>
-    public static void SaveSinglePage(
-        string outputPath,
-        PageSource source,
-        int rotationDegrees,
-        double originalWidthPt,
-        double originalHeightPt,
-        IEnumerable<Annotation> annotations)
-    {
-        Save(outputPath, [(source, rotationDegrees, originalWidthPt, originalHeightPt, annotations)]);
-    }
-
     /// <summary>Saves multiple pages with annotations to a new PDF file.</summary>
-    public static void Save(
+    public void Save(
         string outputPath,
         IEnumerable<(PageSource Source, int RotationDegrees, double OriginalWidthPt, double OriginalHeightPt,
-            IEnumerable<Annotation> Annotations)> pages)
+            IEnumerable<Annotation> Annotations)> pages,
+        string? outputPassword = null)
     {
         var sourceDocCache = new Dictionary<byte[], PdfDocument>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         var fileCache = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
@@ -36,8 +25,10 @@ public static class PdfSaveService
             {
                 if (!sourceDocCache.TryGetValue(source.PdfBytes, out var sourceDoc))
                 {
-                    sourceDoc = PdfReader.Open(
-                        new MemoryStream(source.PdfBytes), PdfDocumentOpenMode.Import);
+                    // PdfReader reads the stream eagerly in Import mode; stream lifetime is managed by PdfDocument.Dispose()
+                    sourceDoc = string.IsNullOrEmpty(source.Password)
+                        ? PdfReader.Open(new MemoryStream(source.PdfBytes), PdfDocumentOpenMode.Import)
+                        : PdfReader.Open(new MemoryStream(source.PdfBytes), source.Password, PdfDocumentOpenMode.Import);
                     sourceDocCache[source.PdfBytes] = sourceDoc;
                 }
 
@@ -68,6 +59,12 @@ public static class PdfSaveService
                         }
                     }
                 }
+            }
+
+            if (!string.IsNullOrEmpty(outputPassword))
+            {
+                outputDoc.SecuritySettings.UserPassword = outputPassword;
+                outputDoc.SecuritySettings.OwnerPassword = outputPassword;
             }
 
             outputDoc.Save(outputPath);

@@ -23,6 +23,7 @@ public partial class PageItem : ObservableObject
     public double HeightPt => RotationDegrees is 90 or 270 ? OriginalWidthPt : OriginalHeightPt;
 
     public PageSource Source { get; init; } = null!;
+    public MainViewModel ParentVM { get; init; } = null!;
     public ObservableCollection<Annotation> Annotations { get; } = new();
 
     partial void OnRotationDegreesChanged(int value)
@@ -54,6 +55,7 @@ public partial class PageItem : ObservableObject
         }
     }
 
+    /// <summary>Swaps the page bitmap and disposes the old one. Must be called on the UI thread.</summary>
     public void ReplaceBitmap(Bitmap? newBitmap)
     {
         var old = Bitmap;
