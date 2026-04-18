@@ -10,14 +10,30 @@ namespace pdfSignr.Views;
 /// </summary>
 public class FileDialogWindow : Window
 {
+    private const string LibX11 = "libX11";
+    private const int PropModeReplace = 0;
+
+    static FileDialogWindow()
+    {
+        // Try common sonames in order. libX11.so.6 is what ships on most distros today, but
+        // pinning it in DllImport would break on systems that ship only libX11.so (.7+, etc.).
+        NativeLibrary.SetDllImportResolver(typeof(FileDialogWindow).Assembly, Resolve);
+
+        static nint Resolve(string name, System.Reflection.Assembly asm, DllImportSearchPath? path)
+        {
+            if (name != LibX11 || !OperatingSystem.IsLinux()) return 0;
+            foreach (var candidate in new[] { "libX11.so.6", "libX11.so" })
+                if (NativeLibrary.TryLoad(candidate, asm, path, out var handle))
+                    return handle;
+            return 0;
+        }
+    }
+
     public FileDialogWindow()
     {
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
 
-        // The native X11 window is created in the base Window() constructor,
-        // so the handle is available here — before the window is mapped.
-        // Setting the type now means the WM sees it on the initial MapRequest.
         if (OperatingSystem.IsLinux())
             TrySetX11DialogHint();
     }
@@ -27,12 +43,10 @@ public class FileDialogWindow : Window
         try
         {
             var platformHandle = TryGetPlatformHandle();
-            if (platformHandle is null)
-                return;
+            if (platformHandle is null) return;
 
             var display = XOpenDisplay(null);
-            if (display == nint.Zero)
-                return;
+            if (display == nint.Zero) return;
 
             try
             {
@@ -66,21 +80,11 @@ public class FileDialogWindow : Window
         }
     }
 
-    private const int PropModeReplace = 0;
-
-    [DllImport("libX11.so.6")]
-    private static extern nint XOpenDisplay(string? display);
-
-    [DllImport("libX11.so.6")]
-    private static extern int XCloseDisplay(nint display);
-
-    [DllImport("libX11.so.6")]
-    private static extern nint XInternAtom(nint display, string atomName, bool onlyIfExists);
-
-    [DllImport("libX11.so.6")]
+    [DllImport(LibX11)] private static extern nint XOpenDisplay(string? display);
+    [DllImport(LibX11)] private static extern int XCloseDisplay(nint display);
+    [DllImport(LibX11)] private static extern nint XInternAtom(nint display, string atomName, bool onlyIfExists);
+    [DllImport(LibX11)]
     private static extern int XChangeProperty(nint display, nint window, nint property,
         nint type, int format, int mode, nint data, int nelements);
-
-    [DllImport("libX11.so.6")]
-    private static extern int XFlush(nint display);
+    [DllImport(LibX11)] private static extern int XFlush(nint display);
 }

@@ -58,21 +58,9 @@ public partial class MainWindow
     {
         if (_editingText != null)
         {
-            // Push undo entry if text or font changed
-            var ann = _editingText;
-            var oldText = _textBeforeEdit;
-            var oldFont = _fontBeforeEdit;
-            var newText = ann.Text;
-            var newFont = ann.FontFamily;
-
-            if (oldText != newText || oldFont != newFont)
-            {
-                ViewModel.UndoRedo.Push(new Services.UndoEntry(
-                    "Edit text",
-                    Undo: () => { ann.Text = oldText!; ann.FontFamily = oldFont!; },
-                    Redo: () => { ann.Text = newText; ann.FontFamily = newFont; }
-                ));
-            }
+            ViewModel.CommitTextEdit(_editingText,
+                _textBeforeEdit!, _fontBeforeEdit!,
+                _editingText.Text, _editingText.FontFamily);
 
             _editingText.PropertyChanged -= OnEditingAnnotationMoved;
             InlineTextBox.TextChanged -= OnInlineTextChanged;

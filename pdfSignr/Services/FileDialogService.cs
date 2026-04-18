@@ -1,13 +1,12 @@
 using Avalonia.Platform.Storage;
-using pdfSignr.Views;
 
 namespace pdfSignr.Services;
 
-public class FileDialogService(IStorageProvider storageProvider, DialogOverlay dialog) : IFileDialogService
+public class FileDialogService(IWindowAccessor windows) : IFileDialogService
 {
     public async Task<string?> PickOpenFileAsync(string title, string[] patterns)
     {
-        var files = await storageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        var files = await windows.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
             Title = title,
             FileTypeFilter = [new FilePickerFileType(title) { Patterns = patterns }]
@@ -17,7 +16,7 @@ public class FileDialogService(IStorageProvider storageProvider, DialogOverlay d
 
     public async Task<string?> PickSaveFileAsync(string title, string suggestedName, string extension, string[] patterns)
     {
-        var file = await storageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        var file = await windows.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
             Title = title,
             SuggestedFileName = suggestedName,
@@ -29,12 +28,12 @@ public class FileDialogService(IStorageProvider storageProvider, DialogOverlay d
 
     public async Task ShowErrorAsync(string title, string message)
     {
-        await dialog.ShowMessageAsync(title, message);
+        await windows.Dialog.ShowMessageAsync(title, message);
     }
 
     public async Task<bool> ConfirmAsync(string title, string message)
     {
-        var result = await dialog.ShowConfirmAsync(title, message);
+        var result = await windows.Dialog.ShowConfirmAsync(title, message);
         return result.Confirmed;
     }
 }

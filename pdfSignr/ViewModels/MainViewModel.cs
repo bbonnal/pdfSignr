@@ -2,7 +2,6 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using Avalonia;
-using Avalonia.Input;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using pdfSignr.Models;
@@ -102,9 +101,6 @@ public partial class MainViewModel : ObservableObject
     public bool IsSignToolActive => CurrentTool == ToolMode.Signature;
     public string TextToolTip => IsTextToolActive ? "Click on page to place text" : "Add text";
     public string SignToolTip => IsSignToolActive ? "Click on page to place signature" : "Add signature";
-    private static readonly Cursor DragMoveCursor = new(StandardCursorType.DragMove);
-    public Cursor? PlacementCursor => CurrentTool is ToolMode.Text or ToolMode.Signature
-        ? DragMoveCursor : null;
 
     public event Action? PdfLoaded;
     public event Action<PageItem>? PageRotated;
@@ -112,17 +108,19 @@ public partial class MainViewModel : ObservableObject
     /// <summary>Set by the View to show a password overlay. Args: title, message, showError. Returns password or null.</summary>
     public Func<string, string, bool, Task<string?>>? ShowPasswordOverlay { get; set; }
 
-    public UndoRedoService UndoRedo { get; } = new();
+    public UndoRedoService UndoRedo { get; }
 
     public IPdfRenderService RenderService => _renderService;
 
     public MainViewModel(IFileDialogService fileDialogs, IPdfRenderService renderService,
-        IPdfSaveService saveService, IPdfCompressService compressService)
+        IPdfSaveService saveService, IPdfCompressService compressService,
+        ISettingsService settings)
     {
         _fileDialogs = fileDialogs;
         _renderService = renderService;
         _saveService = saveService;
         _compressService = compressService;
+        UndoRedo = new UndoRedoService(settings);
         Pages.CollectionChanged += OnPagesCollectionChanged;
         UndoRedo.PropertyChanged += (_, _) =>
         {
@@ -205,7 +203,6 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsSignToolActive));
         OnPropertyChanged(nameof(TextToolTip));
         OnPropertyChanged(nameof(SignToolTip));
-        OnPropertyChanged(nameof(PlacementCursor));
     }
 
     // --- Commands ---

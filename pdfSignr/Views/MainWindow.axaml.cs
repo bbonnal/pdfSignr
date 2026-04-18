@@ -7,6 +7,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Iconr;
+using Microsoft.Extensions.DependencyInjection;
 using pdfSignr.Models;
 using pdfSignr.Services;
 using pdfSignr.ViewModels;
@@ -15,19 +16,26 @@ namespace pdfSignr.Views;
 
 public partial class MainWindow : Window
 {
-    private const double ZoomFactor = 1.1; // 10% per step, multiplicative
-    private const double MinZoom = 0.1;
-    private const double MaxZoom = 5.0;
     private const double FitToWidthPadding = 40;
     private const double ScrollIntoViewMargin = 20;
     private const double DragThumbnailWidth = 80;
-    // 14px invisible outer grab zone + 8px inward from the page edge = 22px total
-    private const double BorderHitZone = 22;
+    // 28px invisible outer grab zone + 12px inward from the page edge = 40px total
+    private const double BorderHitZone = 40;
+
+    private readonly IKeyBindingService _keyBindingService;
+    private readonly AppSettings _settings;
+
+    private double ZoomFactor => _settings.ZoomFactor;
+    private double MinZoom => _settings.MinZoom;
+    private double MaxZoom => _settings.MaxZoom;
 
     private MainViewModel ViewModel => (MainViewModel)DataContext!;
 
     public MainWindow()
     {
+        _keyBindingService = App.Services.GetRequiredService<IKeyBindingService>();
+        _settings = App.Services.GetRequiredService<ISettingsService>().Current;
+
         InitializeComponent();
 
         AddHandler(PageCanvas.CanvasClickedEvent, OnCanvasClicked);
@@ -55,8 +63,10 @@ public partial class MainWindow : Window
     private void PopulateKeyBindingsFlyout()
     {
         string? lastCategory = null;
-        foreach (var kb in KeyBindingService.Bindings)
+        var rows = _keyBindingService.DisplayRows;
+        for (int i = 0; i < rows.Count; i++)
         {
+            var kb = rows[i];
             if (kb.Category != lastCategory)
             {
                 lastCategory = kb.Category;
@@ -66,14 +76,11 @@ public partial class MainWindow : Window
                     FontSize = 11,
                     FontWeight = FontWeight.SemiBold,
                     Opacity = 0.6,
-                    Margin = new Thickness(0, lastCategory == KeyBindingService.Bindings[0].Category ? 0 : 8, 0, 2)
+                    Margin = new Thickness(0, i == 0 ? 0 : 8, 0, 2)
                 });
             }
 
-            var row = new Grid
-            {
-                ColumnDefinitions = new ColumnDefinitions("Auto,*"),
-            };
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
             var keyBorder = new Border
             {
                 Background = Brushes.Gray,
@@ -83,7 +90,7 @@ public partial class MainWindow : Window
                 Margin = new Thickness(0, 0, 10, 0),
                 Child = new TextBlock
                 {
-                    Text = kb.Keys,
+                    Text = kb.DisplayText,
                     FontSize = 11,
                     FontWeight = FontWeight.SemiBold,
                 }
@@ -180,31 +187,9 @@ public partial class MainWindow : Window
 
     private void OnAnnotationManipulated(object? sender, AnnotationManipulatedEventArgs e)
     {
-        var ann = e.Annotation;
-        double oldX = e.OldX, oldY = e.OldY, oldW = e.OldW, oldH = e.OldH, oldRot = e.OldRot;
-        double newX = e.NewX, newY = e.NewY, newW = e.NewW, newH = e.NewH, newRot = e.NewRot;
-
-        ViewModel.UndoRedo.Push(new UndoEntry(
-            "Move/resize annotation",
-            Undo: () =>
-            {
-                ann.X = oldX; ann.Y = oldY; ann.WidthPt = oldW; ann.HeightPt = oldH; ann.Rotation = oldRot;
-                if (ann is SvgAnnotation svg)
-                {
-                    svg.Scale = svg.OriginalWidthPt > 0 ? oldW / svg.OriginalWidthPt : 1;
-                    svg.ReRender(PdfConstants.RenderDpi);
-                }
-            },
-            Redo: () =>
-            {
-                ann.X = newX; ann.Y = newY; ann.WidthPt = newW; ann.HeightPt = newH; ann.Rotation = newRot;
-                if (ann is SvgAnnotation svg)
-                {
-                    svg.Scale = svg.OriginalWidthPt > 0 ? newW / svg.OriginalWidthPt : 1;
-                    svg.ReRender(PdfConstants.RenderDpi);
-                }
-            }
-        ));
+        ViewModel.CommitAnnotationManipulation(e.Annotation,
+            e.OldX, e.OldY, e.OldW, e.OldH, e.OldRot,
+            e.NewX, e.NewY, e.NewW, e.NewH, e.NewRot);
     }
 
     // ═══ Page selection ═══

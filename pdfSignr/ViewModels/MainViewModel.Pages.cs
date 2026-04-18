@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using pdfSignr.Models;
 using pdfSignr.Services;
+using pdfSignr.Services.Commands;
 
 namespace pdfSignr.ViewModels;
 
@@ -21,14 +22,8 @@ public partial class MainViewModel
 
         var idx = Pages.IndexOf(page);
         if (idx <= 0) return;
-        Pages.Move(idx, idx - 1);
-        RenumberPages();
 
-        UndoRedo.Push(new UndoEntry(
-            "Move page up",
-            Undo: () => { Pages.Move(idx - 1, idx); RenumberPages(); },
-            Redo: () => { Pages.Move(idx, idx - 1); RenumberPages(); }
-        ));
+        UndoRedo.Execute(new MovePageCommand(Pages, idx, idx - 1, RenumberPages));
     }
 
     [RelayCommand]
@@ -42,14 +37,8 @@ public partial class MainViewModel
 
         var idx = Pages.IndexOf(page);
         if (idx < 0 || idx >= Pages.Count - 1) return;
-        Pages.Move(idx, idx + 1);
-        RenumberPages();
 
-        UndoRedo.Push(new UndoEntry(
-            "Move page down",
-            Undo: () => { Pages.Move(idx + 1, idx); RenumberPages(); },
-            Redo: () => { Pages.Move(idx, idx + 1); RenumberPages(); }
-        ));
+        UndoRedo.Execute(new MovePageCommand(Pages, idx, idx + 1, RenumberPages));
     }
 
     private void MoveSelectedPagesUp()
@@ -81,11 +70,8 @@ public partial class MainViewModel
         RenumberPages();
 
         var orderAfter = Pages.ToList();
-        UndoRedo.Push(new UndoEntry(
-            "Move selected pages up",
-            Undo: () => ReorderPages(orderBefore),
-            Redo: () => ReorderPages(orderAfter)
-        ));
+        UndoRedo.Push(new ReorderPagesCommand(
+            "Move selected pages up", orderBefore, orderAfter, ApplyPageOrder));
     }
 
     private void MoveSelectedPagesDown()
@@ -117,14 +103,11 @@ public partial class MainViewModel
         RenumberPages();
 
         var orderAfter = Pages.ToList();
-        UndoRedo.Push(new UndoEntry(
-            "Move selected pages down",
-            Undo: () => ReorderPages(orderBefore),
-            Redo: () => ReorderPages(orderAfter)
-        ));
+        UndoRedo.Push(new ReorderPagesCommand(
+            "Move selected pages down", orderBefore, orderAfter, ApplyPageOrder));
     }
 
-    private void ReorderPages(IReadOnlyList<PageItem> order)
+    private void ApplyPageOrder(IReadOnlyList<PageItem> order)
     {
         Pages.Clear();
         foreach (var p in order) Pages.Add(p);
@@ -135,15 +118,9 @@ public partial class MainViewModel
     public void MovePageByDrag(int fromIndex, int toIndex)
     {
         if (fromIndex == toIndex || fromIndex < 0 || toIndex < 0) return;
-        Pages.Move(fromIndex, toIndex);
-        RenumberPages();
-        PageStructureChanged?.Invoke();
 
-        UndoRedo.Push(new UndoEntry(
-            "Reorder page",
-            Undo: () => { Pages.Move(toIndex, fromIndex); RenumberPages(); PageStructureChanged?.Invoke(); },
-            Redo: () => { Pages.Move(fromIndex, toIndex); RenumberPages(); PageStructureChanged?.Invoke(); }
-        ));
+        UndoRedo.Execute(new MovePageCommand(Pages, fromIndex, toIndex,
+            () => { RenumberPages(); PageStructureChanged?.Invoke(); }));
     }
 
     public void MovePagesByDrag(IReadOnlyList<PageItem> pages, int targetIndex)
@@ -168,11 +145,8 @@ public partial class MainViewModel
         PageStructureChanged?.Invoke();
 
         var orderAfter = Pages.ToList();
-        UndoRedo.Push(new UndoEntry(
-            $"Reorder {pages.Count} pages",
-            Undo: () => ReorderPages(orderBefore),
-            Redo: () => ReorderPages(orderAfter)
-        ));
+        UndoRedo.Push(new ReorderPagesCommand(
+            $"Reorder {pages.Count} pages", orderBefore, orderAfter, ApplyPageOrder));
     }
 
     // --- Page rotation ---
@@ -201,7 +175,7 @@ public partial class MainViewModel
         double oldW = page.WidthPt;
         double oldH = page.HeightPt;
 
-        var annSnaps = page.Annotations.Select(a => (Ann: a, a.X, a.Y)).ToList();
+        var annSnapsBefore = page.Annotations.Select(a => (Ann: a, a.X, a.Y)).ToList();
 
         page.RotateAnnotations(degrees, oldW, oldH);
         page.RotationDegrees = (page.RotationDegrees + degrees) % 360;
@@ -211,27 +185,15 @@ public partial class MainViewModel
 
         PageRotated?.Invoke(page);
 
-        UndoRedo.Push(new UndoEntry(
-            "Rotate page",
-            Undo: () =>
-            {
-                page.RotationDegrees = oldRotation;
-                foreach (var (ann, x, y) in annSnaps) { ann.X = x; ann.Y = y; }
-                PageRotated?.Invoke(page);
-            },
-            Redo: () =>
-            {
-                page.RotationDegrees = newRotation;
-                foreach (var (ann, x, y) in annSnapsAfter) { ann.X = x; ann.Y = y; }
-                PageRotated?.Invoke(page);
-            }
-        ));
+        var state = new RotatePagesCommand.PageState(
+            page, oldRotation, newRotation, annSnapsBefore, annSnapsAfter);
+        UndoRedo.Push(new RotatePagesCommand("Rotate page", [state], p => PageRotated?.Invoke(p)));
     }
 
     private void RotateSelectedPages(int degrees)
     {
         var selected = SelectedPages.ToList();
-        var snapshots = selected.Select(p => new
+        var before = selected.Select(p => new
         {
             Page = p,
             OldRotation = p.RotationDegrees,
@@ -240,43 +202,22 @@ public partial class MainViewModel
             AnnsBefore = p.Annotations.Select(a => (Ann: a, a.X, a.Y)).ToList()
         }).ToList();
 
-        foreach (var snap in snapshots)
+        foreach (var s in before)
         {
-            snap.Page.RotateAnnotations(degrees, snap.OldW, snap.OldH);
-            snap.Page.RotationDegrees = (snap.Page.RotationDegrees + degrees) % 360;
+            s.Page.RotateAnnotations(degrees, s.OldW, s.OldH);
+            s.Page.RotationDegrees = (s.Page.RotationDegrees + degrees) % 360;
         }
 
-        var snapshotsAfter = snapshots.Select(s => new
-        {
-            s.Page,
-            NewRotation = s.Page.RotationDegrees,
-            AnnsAfter = s.Page.Annotations.Select(a => (Ann: a, a.X, a.Y)).ToList()
-        }).ToList();
+        var states = before.Select(s => new RotatePagesCommand.PageState(
+            s.Page, s.OldRotation, s.Page.RotationDegrees, s.AnnsBefore,
+            s.Page.Annotations.Select(a => (Ann: a, a.X, a.Y)).ToList()))
+            .ToList();
 
-        foreach (var snap in snapshots)
-            PageRotated?.Invoke(snap.Page);
+        foreach (var s in states)
+            PageRotated?.Invoke(s.Page);
 
-        UndoRedo.Push(new UndoEntry(
-            $"Rotate {selected.Count} pages",
-            Undo: () =>
-            {
-                foreach (var snap in snapshots)
-                {
-                    snap.Page.RotationDegrees = snap.OldRotation;
-                    foreach (var (ann, x, y) in snap.AnnsBefore) { ann.X = x; ann.Y = y; }
-                    PageRotated?.Invoke(snap.Page);
-                }
-            },
-            Redo: () =>
-            {
-                foreach (var snap in snapshotsAfter)
-                {
-                    snap.Page.RotationDegrees = snap.NewRotation;
-                    foreach (var (ann, x, y) in snap.AnnsAfter) { ann.X = x; ann.Y = y; }
-                    PageRotated?.Invoke(snap.Page);
-                }
-            }
-        ));
+        UndoRedo.Push(new RotatePagesCommand(
+            $"Rotate {selected.Count} pages", states, p => PageRotated?.Invoke(p)));
     }
 
     public void RenumberPages()
@@ -344,25 +285,15 @@ public partial class MainViewModel
             if (PdfFilePath == null)
                 PdfFilePath = path;
 
-            var insertedPages = newPages.ToList();
-            int count = insertedPages.Count;
+            var inserted = newPages.ToList();
             int insertAt = insertIndex;
-            UndoRedo.Push(new UndoEntry(
-                "Insert pages",
-                Undo: () =>
+            UndoRedo.Push(new InsertPagesCommand(
+                Pages, inserted, insertAt,
+                () =>
                 {
-                    for (int i = count - 1; i >= 0; i--)
-                        Pages.RemoveAt(insertAt + i);
                     if (Pages.Count == 0) { PdfFilePath = null; BaseStatus = DefaultStatus; }
                     else RenumberPages();
-                },
-                Redo: () =>
-                {
-                    for (int i = 0; i < count; i++)
-                        Pages.Insert(insertAt + i, insertedPages[i]);
-                    RenumberPages();
-                }
-            ));
+                }));
         }
         catch (Exception ex)
         {
@@ -428,35 +359,21 @@ public partial class MainViewModel
     private void DeleteSelectedPages()
     {
         var toRemove = SelectedPages.ToList();
-        var snapshots = toRemove.Select(p => (Page: p, Index: Pages.IndexOf(p))).OrderByDescending(x => x.Index).ToList();
+        var snapshots = toRemove
+            .Select(p => (Page: p, Index: Pages.IndexOf(p)))
+            .OrderByDescending(x => x.Index)
+            .ToList();
 
         if (SelectedAnnotation != null && toRemove.Any(p => p.Annotations.Contains(SelectedAnnotation)))
             SelectAnnotation(null);
 
-        foreach (var (page, _) in snapshots)
-            Pages.Remove(page);
-
-        if (Pages.Count == 0) { PdfFilePath = null; BaseStatus = DefaultStatus; }
-        else RenumberPages();
-        PageStructureChanged?.Invoke();
-
-        UndoRedo.Push(new UndoEntry(
-            "Delete selected pages",
-            Undo: () =>
+        UndoRedo.Execute(new DeletePagesCommand(
+            Pages, snapshots,
+            () =>
             {
-                foreach (var (page, idx) in snapshots.OrderBy(x => x.Index))
-                    Pages.Insert(idx, page);
-                RenumberPages();
-                PageStructureChanged?.Invoke();
-            },
-            Redo: () =>
-            {
-                foreach (var (page, _) in snapshots)
-                    Pages.Remove(page);
                 if (Pages.Count == 0) { PdfFilePath = null; BaseStatus = DefaultStatus; }
                 else RenumberPages();
                 PageStructureChanged?.Invoke();
-            }
-        ));
+            }));
     }
 }

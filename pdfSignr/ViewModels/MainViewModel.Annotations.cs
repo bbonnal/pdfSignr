@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.Input;
 using pdfSignr.Models;
 using pdfSignr.Services;
+using pdfSignr.Services.Commands;
 
 namespace pdfSignr.ViewModels;
 
@@ -22,14 +23,8 @@ public partial class MainViewModel
         }
         if (ownerPage == null) return;
 
-        ownerPage.Annotations.RemoveAt(annIndex);
-        SelectAnnotation(null);
-
-        UndoRedo.Push(new UndoEntry(
-            "Delete annotation",
-            Undo: () => { ownerPage.Annotations.Insert(annIndex, ann); SelectAnnotation(ann); },
-            Redo: () => { ownerPage.Annotations.Remove(ann); SelectAnnotation(null); }
-        ));
+        var cmd = new DeleteAnnotationCommand(this, ownerPage, ann, annIndex);
+        UndoRedo.Execute(cmd);
     }
 
     private bool CanDelete => SelectedAnnotation != null;
@@ -76,55 +71,53 @@ public partial class MainViewModel
                 Text = "Text", FontFamily = FontResolver.PdfFontNames[0],
                 HeightPt = h, WidthPt = w
             };
-            page.Annotations.Add(annotation);
-            SelectAnnotation(annotation);
+            UndoRedo.Execute(new AddAnnotationCommand(this, page, annotation));
             CurrentTool = ToolMode.Select;
-
-            UndoRedo.Push(new UndoEntry(
-                "Add text",
-                Undo: () => { page.Annotations.Remove(annotation); SelectAnnotation(null); },
-                Redo: () => { page.Annotations.Add(annotation); SelectAnnotation(annotation); }
-            ));
         }
         else if (CurrentTool == ToolMode.Signature && SignatureSvgPath != null)
         {
             bool isRaster = !SignatureSvgPath.EndsWith(".svg", StringComparison.OrdinalIgnoreCase);
 
             double baseW, baseH;
-            Avalonia.Media.Imaging.Bitmap bitmap;
 
             if (isRaster)
             {
                 (baseW, baseH) = SvgRenderService.GetImageSize(SignatureSvgPath);
-                bitmap = new Avalonia.Media.Imaging.Bitmap(SignatureSvgPath);
             }
             else
             {
-                (baseW, baseH, bitmap) = SvgRenderService.GetSizeAndRenderForDisplay(SignatureSvgPath, 1.0, PdfConstants.RenderDpi);
+                (baseW, baseH) = SvgRenderService.GetSvgSize(SignatureSvgPath);
             }
+
+            double fitScale = 1.0;
+            if (baseW > 0 && baseH > 0)
+            {
+                double maxW = page.WidthPt * 0.25;
+                double maxH = page.HeightPt * 0.10;
+                fitScale = Math.Min(1.0, Math.Min(maxW / baseW, maxH / baseH));
+            }
+            double displayW = baseW * fitScale;
+            double displayH = baseH * fitScale;
+
+            Avalonia.Media.Imaging.Bitmap bitmap = isRaster
+                ? SvgRenderService.ResampleForDisplay(SignatureSvgPath, displayW, displayH, PdfConstants.RenderDpi)
+                : SvgRenderService.RenderForDisplay(SignatureSvgPath, fitScale, PdfConstants.RenderDpi);
 
             var annotation = new SvgAnnotation
             {
-                X = Math.Clamp(pdfX - baseW / 2, 0, Math.Max(0, page.WidthPt - baseW)),
-                Y = Math.Clamp(pdfY - baseH / 2, 0, Math.Max(0, page.HeightPt - baseH)),
+                X = Math.Clamp(pdfX - displayW / 2, 0, Math.Max(0, page.WidthPt - displayW)),
+                Y = Math.Clamp(pdfY - displayH / 2, 0, Math.Max(0, page.HeightPt - displayH)),
                 PageIndex = pageIndex,
                 SvgFilePath = SignatureSvgPath,
                 IsRaster = isRaster,
-                Scale = 1.0,
+                Scale = fitScale,
                 OriginalWidthPt = baseW, OriginalHeightPt = baseH,
-                WidthPt = baseW, HeightPt = baseH,
+                WidthPt = displayW, HeightPt = displayH,
                 RenderedBitmap = bitmap,
                 RenderedDpi = PdfConstants.RenderDpi
             };
-            page.Annotations.Add(annotation);
-            SelectAnnotation(annotation);
+            UndoRedo.Execute(new AddAnnotationCommand(this, page, annotation));
             CurrentTool = ToolMode.Select;
-
-            UndoRedo.Push(new UndoEntry(
-                "Add signature",
-                Undo: () => { page.Annotations.Remove(annotation); SelectAnnotation(null); },
-                Redo: () => { page.Annotations.Add(annotation); SelectAnnotation(annotation); }
-            ));
         }
         else
         {
@@ -141,5 +134,32 @@ public partial class MainViewModel
 
         if (annotation != null)
             annotation.IsSelected = true;
+    }
+
+    /// <summary>
+    /// View-layer intent: commit a pointer-driven manipulation of an annotation.
+    /// The view reports old/new bounds; the VM records the reversible command.
+    /// </summary>
+    public void CommitAnnotationManipulation(
+        Annotation ann,
+        double oldX, double oldY, double oldW, double oldH, double oldRot,
+        double newX, double newY, double newW, double newH, double newRot)
+    {
+        bool changed = newX != oldX || newY != oldY
+                    || newW != oldW || newH != oldH || newRot != oldRot;
+        if (!changed) return;
+
+        UndoRedo.Push(new ManipulateAnnotationCommand(ann,
+            oldX, oldY, oldW, oldH, oldRot,
+            newX, newY, newW, newH, newRot));
+    }
+
+    /// <summary>
+    /// View-layer intent: commit a text-annotation text/font edit from the inline editor.
+    /// </summary>
+    public void CommitTextEdit(TextAnnotation ann, string oldText, string oldFont, string newText, string newFont)
+    {
+        if (oldText == newText && oldFont == newFont) return;
+        UndoRedo.Push(new EditTextAnnotationCommand(ann, oldText, oldFont, newText, newFont));
     }
 }

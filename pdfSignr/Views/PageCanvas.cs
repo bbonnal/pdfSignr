@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
-using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -9,6 +8,7 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using pdfSignr.Models;
+using static pdfSignr.Views.InteractionConstants;
 
 namespace pdfSignr.Views;
 
@@ -47,43 +47,32 @@ public class AnnotationManipulatedEventArgs(
     public double NewRot { get; } = newRot;
 }
 
-// --- PageCanvas ---
-
+/// <summary>
+/// A single PDF page surface. Hosts a page bitmap, a list of annotations, and a pointer
+/// state machine for annotation manipulation. Rendering and hit-testing are delegated
+/// to <see cref="AnnotationRenderer"/> and <see cref="AnnotationHitTester"/>; this class
+/// owns only the state machine and Avalonia control plumbing.
+/// </summary>
 public class PageCanvas : Control
 {
     private const double Scale = PdfConstants.DpiScale;
-    private const double HandleRadius = 5;
-    private const double HandleHit = 10;
-    private const double RotateDistance = 28;
-    private const double RotateRadius = 6;
-    private const double MinSizePt = 8;
-    private const double DeleteSize = 7;
-    private const double DeleteOffset = 14;
-    private const double HitBodyInflate = 4;
 
-    // Cached cursors to avoid allocations on every mouse move
+    // Cached cursors (allocation-free reuse)
     private static readonly Cursor CursorHand = new(StandardCursorType.Hand);
     private static readonly Cursor CursorTopLeft = new(StandardCursorType.TopLeftCorner);
     private static readonly Cursor CursorTopRight = new(StandardCursorType.TopRightCorner);
     private static readonly Cursor CursorDragMove = new(StandardCursorType.DragMove);
 
-    // Cached pens to avoid allocations on every render frame
-    private static readonly Pen SelectionDashPen = new(Brushes.DodgerBlue, 1.5, DashStyle.Dash);
-    private static readonly Pen HandlePen = new(Brushes.DodgerBlue, 1.5);
-    private static readonly Pen DeleteCirclePen = new(Brushes.IndianRed, 1.5);
-    private static readonly Pen DeleteXPen = new(Brushes.IndianRed, 2);
-
-    // Interaction state
+    // Pointer state
     private enum State { Idle, Dragging, Resizing, Rotating }
-    private enum Handle { None, TL, TR, BL, BR, Rotate, Delete }
-
     private State _state = State.Idle;
-    private Handle _activeHandle = Handle.None;
+    private AnnotationHandle _activeHandle = AnnotationHandle.None;
     private Annotation? _target;
     private Point _dragStart;
     private double _startX, _startY, _startW, _startH, _startRot, _startAngle;
 
-    // Routed events
+    // ═══ Routed events ═══
+
     public static readonly RoutedEvent<CanvasClickedEventArgs> CanvasClickedEvent =
         RoutedEvent.Register<PageCanvas, CanvasClickedEventArgs>(nameof(CanvasClicked), RoutingStrategies.Bubble);
     public static readonly RoutedEvent<AnnotationSelectedEventArgs> AnnotationSelectedEvent =
@@ -102,7 +91,8 @@ public class PageCanvas : Control
     public event EventHandler<AnnotationManipulatedEventArgs> AnnotationManipulated
     { add => AddHandler(AnnotationManipulatedEvent, value); remove => RemoveHandler(AnnotationManipulatedEvent, value); }
 
-    // Styled properties
+    // ═══ Styled properties ═══
+
     public static readonly StyledProperty<Bitmap?> PageBitmapProperty =
         AvaloniaProperty.Register<PageCanvas, Bitmap?>(nameof(PageBitmap));
     public static readonly StyledProperty<int> PageIndexProperty =
@@ -131,7 +121,7 @@ public class PageCanvas : Control
 
     static PageCanvas() => AffectsRender<PageCanvas>(PageBitmapProperty, AnnotationsProperty, PageWidthPtProperty, PageHeightPtProperty);
 
-    // --- Property change wiring ---
+    // ═══ Property wiring ═══
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
@@ -144,8 +134,9 @@ public class PageCanvas : Control
             { c.CollectionChanged += OnCollChanged; foreach (var a in c) a.PropertyChanged += OnAnnChanged; }
             InvalidateVisual(); InvalidateMeasure();
         }
-        if (change.Property == PageBitmapProperty) { InvalidateVisual(); }
-        if (change.Property == PageWidthPtProperty || change.Property == PageHeightPtProperty) { InvalidateVisual(); InvalidateMeasure(); }
+        if (change.Property == PageBitmapProperty) InvalidateVisual();
+        if (change.Property == PageWidthPtProperty || change.Property == PageHeightPtProperty)
+        { InvalidateVisual(); InvalidateMeasure(); }
     }
 
     private void OnCollChanged(object? s, NotifyCollectionChangedEventArgs e)
@@ -154,15 +145,15 @@ public class PageCanvas : Control
         if (e.NewItems != null) foreach (Annotation a in e.NewItems) a.PropertyChanged += OnAnnChanged;
         InvalidateVisual();
     }
+
     private void OnAnnChanged(object? s, PropertyChangedEventArgs e)
     {
-        // Only invalidate for properties that affect rendering
         if (e.PropertyName is nameof(Annotation.X) or nameof(Annotation.Y)
             or nameof(Annotation.Rotation) or nameof(Annotation.IsSelected)
             or nameof(TextAnnotation.Text) or nameof(TextAnnotation.FontFamily) or nameof(TextAnnotation.FontSize)
             or nameof(Annotation.WidthPt) or nameof(Annotation.HeightPt)
             or nameof(SvgAnnotation.RenderedBitmap) or nameof(SvgAnnotation.Scale)
-            or null) // null = multiple properties changed
+            or null)
         {
             InvalidateVisual();
         }
@@ -177,116 +168,38 @@ public class PageCanvas : Control
         return new Size(100, 100);
     }
 
-    // ════════════════════════════════════════
-    //  RENDERING
-    // ════════════════════════════════════════
+    // ═══ Rendering (delegated) ═══
 
     public override void Render(DrawingContext ctx)
     {
-        if (PageBitmap != null)
-        {
-            // Draw bitmap stretched to the fixed layout size (base DPI),
-            // so higher-DPI bitmaps provide more detail without changing layout
-            var destRect = new Rect(0, 0, PageWidthPt * Scale, PageHeightPt * Scale);
-            if (destRect.Width <= 0 || destRect.Height <= 0)
-                destRect = new Rect(0, 0, PageBitmap.Size.Width, PageBitmap.Size.Height);
-            ctx.DrawImage(PageBitmap, destRect);
-        }
-
-        if (Annotations == null) return;
-
-        foreach (var ann in Annotations)
-        {
-            var rect = ScreenRect(ann);
-            if (ann.Rotation != 0)
-            {
-                var c = rect.Center;
-                using (ctx.PushTransform(
-                    Matrix.CreateTranslation(-c.X, -c.Y) *
-                    Matrix.CreateRotation(ann.Rotation * Math.PI / 180.0) *
-                    Matrix.CreateTranslation(c.X, c.Y)))
-                {
-                    DrawContent(ctx, ann, rect);
-                    if (ann.IsSelected) DrawChrome(ctx, rect);
-                }
-            }
-            else
-            {
-                DrawContent(ctx, ann, rect);
-                if (ann.IsSelected) DrawChrome(ctx, rect);
-            }
-        }
+        AnnotationRenderer.DrawPage(ctx, PageBitmap, PageWidthPt, PageHeightPt, Scale);
+        AnnotationRenderer.DrawAnnotations(ctx, Annotations, Scale);
     }
 
-    private void DrawContent(DrawingContext ctx, Annotation ann, Rect rect)
-    {
-        if (ann is TextAnnotation t)
-        {
-            var ft = MakeFormattedText(t);
-            ctx.DrawText(ft, rect.TopLeft);
-        }
-        else if (ann is SvgAnnotation svg && svg.RenderedBitmap != null)
-        {
-            ctx.DrawImage(svg.RenderedBitmap, rect);
-        }
-    }
-
-    private static void DrawChrome(DrawingContext ctx, Rect rect)
-    {
-        ctx.DrawRectangle(null, SelectionDashPen, rect.Inflate(2));
-
-        // Corner handles
-        DrawCircle(ctx, rect.TopLeft, HandleRadius, Brushes.White, HandlePen);
-        DrawCircle(ctx, rect.TopRight, HandleRadius, Brushes.White, HandlePen);
-        DrawCircle(ctx, rect.BottomLeft, HandleRadius, Brushes.White, HandlePen);
-        DrawCircle(ctx, rect.BottomRight, HandleRadius, Brushes.White, HandlePen);
-
-        // Rotation handle
-        var topMid = new Point(rect.Center.X, rect.Top);
-        var rotPos = new Point(rect.Center.X, rect.Top - RotateDistance);
-        ctx.DrawLine(HandlePen, topMid, rotPos);
-        DrawCircle(ctx, rotPos, RotateRadius, Brushes.LightGreen, HandlePen);
-
-        // Delete handle (red circle with X, top-right outside corner)
-        var delPos = new Point(rect.Right + DeleteOffset, rect.Top - DeleteOffset);
-        DrawCircle(ctx, delPos, HandleRadius + 2, Brushes.White, DeleteCirclePen);
-        ctx.DrawLine(DeleteXPen,
-            new Point(delPos.X - DeleteSize / 2, delPos.Y - DeleteSize / 2),
-            new Point(delPos.X + DeleteSize / 2, delPos.Y + DeleteSize / 2));
-        ctx.DrawLine(DeleteXPen,
-            new Point(delPos.X + DeleteSize / 2, delPos.Y - DeleteSize / 2),
-            new Point(delPos.X - DeleteSize / 2, delPos.Y + DeleteSize / 2));
-    }
-
-    private static void DrawCircle(DrawingContext ctx, Point c, double r, IBrush fill, IPen pen) =>
-        ctx.DrawEllipse(fill, pen, c, r, r);
-
-    // ════════════════════════════════════════
-    //  POINTER INTERACTION
-    // ════════════════════════════════════════
+    // ═══ Pointer interaction ═══
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
 
-        // Let right-clicks bubble up to the ContextMenu on the parent Panel
+        // Right-click bubbles to ContextMenu
         if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed)
             return;
 
         var pos = e.GetPosition(this);
 
-        // 1) Check handles on selected annotation
+        // 1) Handle hits on the selected annotation
         var selected = Annotations?.FirstOrDefault(a => a.IsSelected);
         if (selected != null)
         {
-            var h = HitHandle(selected, pos);
-            if (h == Handle.Delete)
+            var h = AnnotationHitTester.HitHandle(selected, pos, Scale);
+            if (h == AnnotationHandle.Delete)
             {
                 RaiseEvent(new RoutedEventArgs(DeleteRequestedEvent));
                 e.Handled = true;
                 return;
             }
-            if (h != Handle.None)
+            if (h != AnnotationHandle.None)
             {
                 BeginHandleInteraction(selected, h, pos);
                 e.Pointer.Capture(this);
@@ -295,12 +208,12 @@ public class PageCanvas : Control
             }
         }
 
-        // 2) Hit test annotation bodies
+        // 2) Body hits (topmost first)
         if (Annotations != null)
         {
             for (int i = Annotations.Count - 1; i >= 0; i--)
             {
-                if (HitBody(Annotations[i], pos))
+                if (AnnotationHitTester.HitBody(Annotations[i], pos, Scale))
                 {
                     RaiseEvent(new AnnotationSelectedEventArgs(AnnotationSelectedEvent, Annotations[i]));
                     _state = State.Dragging;
@@ -308,6 +221,9 @@ public class PageCanvas : Control
                     _dragStart = pos;
                     _startX = Annotations[i].X;
                     _startY = Annotations[i].Y;
+                    _startW = Annotations[i].WidthPt;
+                    _startH = Annotations[i].HeightPt;
+                    _startRot = Annotations[i].Rotation;
                     Cursor = CursorDragMove;
                     e.Pointer.Capture(this);
                     e.Handled = true;
@@ -316,7 +232,7 @@ public class PageCanvas : Control
             }
         }
 
-        // 3) Empty space
+        // 3) Empty space — fire a canvas click for tool placement
         RaiseEvent(new CanvasClickedEventArgs(CanvasClickedEvent, PageIndex, pos.X / Scale, pos.Y / Scale));
         e.Handled = true;
     }
@@ -332,15 +248,12 @@ public class PageCanvas : Control
                 _target.X = _startX + (pos.X - _dragStart.X) / Scale;
                 _target.Y = _startY + (pos.Y - _dragStart.Y) / Scale;
                 break;
-
             case State.Resizing when _target != null:
                 DoResize(pos);
                 break;
-
             case State.Rotating when _target != null:
                 DoRotate(pos);
                 break;
-
             case State.Idle:
                 UpdateIdleCursor(pos);
                 break;
@@ -353,7 +266,6 @@ public class PageCanvas : Control
 
         if (_state == State.Dragging && _target != null)
         {
-            // Clamp annotation to page bounds so it can't be lost off-screen
             _target.X = Math.Clamp(_target.X, 0, Math.Max(0, PageWidthPt - _target.WidthPt));
             _target.Y = Math.Clamp(_target.Y, 0, Math.Max(0, PageHeightPt - _target.HeightPt));
         }
@@ -364,7 +276,6 @@ public class PageCanvas : Control
             svg.ReRender(PdfConstants.RenderDpi);
         }
 
-        // Raise manipulation event if annotation properties changed
         if (_target != null && _state != State.Idle)
         {
             bool changed = _target.X != _startX || _target.Y != _startY
@@ -380,17 +291,13 @@ public class PageCanvas : Control
         }
 
         _state = State.Idle;
-        _activeHandle = Handle.None;
+        _activeHandle = AnnotationHandle.None;
         _target = null;
         e.Pointer.Capture(null);
         UpdateIdleCursor(e.GetPosition(this));
     }
 
-    // ════════════════════════════════════════
-    //  RESIZE / ROTATE LOGIC
-    // ════════════════════════════════════════
-
-    private void BeginHandleInteraction(Annotation ann, Handle h, Point pos)
+    private void BeginHandleInteraction(Annotation ann, AnnotationHandle h, Point pos)
     {
         _target = ann;
         _activeHandle = h;
@@ -401,10 +308,10 @@ public class PageCanvas : Control
         _startY = ann.Y;
         _startRot = ann.Rotation;
 
-        if (h == Handle.Rotate)
+        if (h == AnnotationHandle.Rotate)
         {
             _state = State.Rotating;
-            var rect = ScreenRect(ann);
+            var rect = AnnotationHitTester.ScreenRect(ann, Scale);
             var c = rect.Center;
             _startAngle = Math.Atan2(pos.Y - c.Y, pos.X - c.X);
         }
@@ -418,11 +325,9 @@ public class PageCanvas : Control
     {
         if (_target == null) return;
 
-        // Delta in screen pixels from drag start
         double rawDx = pos.X - _dragStart.X;
         double rawDy = pos.Y - _dragStart.Y;
 
-        // Inverse-rotate delta into local annotation space
         if (_target.Rotation != 0)
         {
             double a = -_target.Rotation * Math.PI / 180.0;
@@ -430,19 +335,16 @@ public class PageCanvas : Control
             (rawDx, rawDy) = (rawDx * cos - rawDy * sin, rawDx * sin + rawDy * cos);
         }
 
-        // Convert to PDF points
         double dx = rawDx / Scale;
         double dy = rawDy / Scale;
 
-        // Sign: handle direction (+1 = dragging increases size, -1 = dragging decreases)
-        double sx = _activeHandle is Handle.TL or Handle.BL ? -1 : 1;
-        double sy = _activeHandle is Handle.TL or Handle.TR ? -1 : 1;
+        double sx = _activeHandle is AnnotationHandle.TL or AnnotationHandle.BL ? -1 : 1;
+        double sy = _activeHandle is AnnotationHandle.TL or AnnotationHandle.TR ? -1 : 1;
 
         double newW, newH;
 
         if (_target is SvgAnnotation && _startW > 0 && _startH > 0)
         {
-            // Aspect-ratio locked: project delta onto the annotation diagonal
             double origDiag = Math.Sqrt(_startW * _startW + _startH * _startH);
             double diagDirX = sx * _startW / origDiag;
             double diagDirY = sy * _startH / origDiag;
@@ -454,16 +356,13 @@ public class PageCanvas : Control
         }
         else
         {
-            // Free resize (text)
             newW = Math.Max(MinSizePt, _startW + sx * dx);
             newH = Math.Max(MinSizePt, _startH + sy * dy);
         }
 
-        // Update size
         _target.WidthPt = newW;
         _target.HeightPt = newH;
 
-        // Shift origin so the opposite corner stays anchored
         _target.X = sx < 0 ? _startX + _startW - newW : _startX;
         _target.Y = sy < 0 ? _startY + _startH - newH : _startY;
     }
@@ -471,76 +370,38 @@ public class PageCanvas : Control
     private void DoRotate(Point pos)
     {
         if (_target == null) return;
-        var rect = ScreenRect(_target);
+        var rect = AnnotationHitTester.ScreenRect(_target, Scale);
         var c = rect.Center;
         double current = Math.Atan2(pos.Y - c.Y, pos.X - c.X);
         double delta = (current - _startAngle) * 180.0 / Math.PI;
         _target.Rotation = _startRot + delta;
     }
 
-    // ════════════════════════════════════════
-    //  HIT TESTING
-    // ════════════════════════════════════════
-
-    private Handle HitHandle(Annotation ann, Point pos)
-    {
-        var rect = ScreenRect(ann);
-        var c = rect.Center;
-        double angle = ann.Rotation * Math.PI / 180.0;
-
-        Point R(Point p) => RotatePoint(p, c, angle);
-
-        // Delete handle (top-right outside)
-        var delPos = R(new Point(rect.Right + DeleteOffset, rect.Top - DeleteOffset));
-        if (Dist(pos, delPos) <= HandleHit) return Handle.Delete;
-
-        var rotPos = R(new Point(rect.Center.X, rect.Top - RotateDistance));
-        if (Dist(pos, rotPos) <= HandleHit) return Handle.Rotate;
-        if (Dist(pos, R(rect.TopLeft)) <= HandleHit) return Handle.TL;
-        if (Dist(pos, R(rect.TopRight)) <= HandleHit) return Handle.TR;
-        if (Dist(pos, R(rect.BottomLeft)) <= HandleHit) return Handle.BL;
-        if (Dist(pos, R(rect.BottomRight)) <= HandleHit) return Handle.BR;
-        return Handle.None;
-    }
-
-    private bool HitBody(Annotation ann, Point pos)
-    {
-        var rect = ScreenRect(ann);
-        if (ann.Rotation != 0)
-        {
-            var local = RotatePoint(pos, rect.Center, -ann.Rotation * Math.PI / 180.0);
-            return rect.Inflate(HitBodyInflate).Contains(local);
-        }
-        return rect.Inflate(HitBodyInflate).Contains(pos);
-    }
-
     private void UpdateIdleCursor(Point pos)
     {
         var fallback = PlacementCursor;
 
-        // Check selected annotation handles first
         var sel = Annotations?.FirstOrDefault(a => a.IsSelected);
         if (sel != null)
         {
-            var h = HitHandle(sel, pos);
-            if (h != Handle.None)
+            var h = AnnotationHitTester.HitHandle(sel, pos, Scale);
+            if (h != AnnotationHandle.None)
             {
                 Cursor = h switch
                 {
-                    Handle.TL or Handle.BR => CursorTopLeft,
-                    Handle.TR or Handle.BL => CursorTopRight,
+                    AnnotationHandle.TL or AnnotationHandle.BR => CursorTopLeft,
+                    AnnotationHandle.TR or AnnotationHandle.BL => CursorTopRight,
                     _ => CursorHand
                 };
                 return;
             }
         }
 
-        // Check if hovering any annotation body
         if (Annotations != null)
         {
             for (int i = Annotations.Count - 1; i >= 0; i--)
             {
-                if (HitBody(Annotations[i], pos))
+                if (AnnotationHitTester.HitBody(Annotations[i], pos, Scale))
                 {
                     Cursor = CursorHand;
                     return;
@@ -549,32 +410,5 @@ public class PageCanvas : Control
         }
 
         Cursor = fallback;
-    }
-
-    // ════════════════════════════════════════
-    //  HELPERS
-    // ════════════════════════════════════════
-
-    private static Rect ScreenRect(Annotation a) =>
-        new(a.X * Scale, a.Y * Scale, a.WidthPt * Scale, a.HeightPt * Scale);
-
-    private static Point RotatePoint(Point p, Point center, double radians)
-    {
-        double dx = p.X - center.X, dy = p.Y - center.Y;
-        return new Point(
-            center.X + dx * Math.Cos(radians) - dy * Math.Sin(radians),
-            center.Y + dx * Math.Sin(radians) + dy * Math.Cos(radians));
-    }
-
-    private static double Dist(Point a, Point b) =>
-        Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y));
-
-    private static FormattedText MakeFormattedText(TextAnnotation t)
-    {
-        var typeface = TextAnnotation.TypefaceCache.GetOrAdd(t.FontFamily,
-            ff => new Typeface(TextAnnotation.MapFontForMeasure(ff)));
-        return new FormattedText(
-            t.Text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-            typeface, t.FontSize * Scale, Brushes.Black);
     }
 }

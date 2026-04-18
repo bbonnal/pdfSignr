@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.Logging;
 using PDFtoImage;
 using PdfSharp.Drawing;
 using PdfSharp.Pdf;
@@ -20,21 +21,29 @@ public record CompressResult(long OriginalSize, long CompressedSize, int PageCou
 public class PdfCompressService : IPdfCompressService
 {
     private readonly IPdfRenderService _renderService;
+    private readonly ISettingsService _settings;
+    private readonly ILogger<PdfCompressService> _logger;
 
-    public PdfCompressService(IPdfRenderService renderService)
+    public PdfCompressService(IPdfRenderService renderService, ISettingsService settings, ILogger<PdfCompressService> logger)
     {
         _renderService = renderService;
+        _settings = settings;
+        _logger = logger;
     }
 
     private record PresetConfig(int ResampleMaxDim, int ResampleQuality, int RasterDpi, int RasterQuality);
 
-    private static PresetConfig GetPreset(CompressionPreset preset) => preset switch
+    private PresetConfig GetPreset(CompressionPreset preset)
     {
-        CompressionPreset.Screen => new(1024, 50, 72, 50),
-        CompressionPreset.Ebook  => new(1600, 65, 150, 70),
-        CompressionPreset.Print  => new(2400, 80, 300, 90),
-        _                        => new(1600, 65, 150, 70),
-    };
+        var dpi = _settings.Current.CompressDpi;
+        return preset switch
+        {
+            CompressionPreset.Screen => new(dpi.ScreenMaxDim, 50, 72, 50),
+            CompressionPreset.Ebook  => new(dpi.EbookMaxDim, 65, 150, 70),
+            CompressionPreset.Print  => new(dpi.PrintMaxDim, 80, 300, 90),
+            _                        => new(dpi.EbookMaxDim, 65, 150, 70),
+        };
+    }
 
     private static long ComputeOriginalSize(IReadOnlyList<(PageSource Source, int RotationDegrees)> pageSources)
     {

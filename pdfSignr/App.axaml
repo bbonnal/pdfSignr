@@ -1,10 +1,12 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:conv="using:pdfSignr.Views.Converters"
              x:Class="pdfSignr.App"
              RequestedThemeVariant="Dark">
 
     <Application.Resources>
         <ResourceDictionary>
+            <conv:ToolToCursorConverter x:Key="ToolToCursor" />
             <!-- ═══ Bundled fonts ═══ -->
             <FontFamily x:Key="LiberationSans">avares://pdfSignr/Assets/Fonts/LiberationSans-Regular.ttf#Liberation Sans</FontFamily>
             <FontFamily x:Key="LiberationSerif">avares://pdfSignr/Assets/Fonts/LiberationSerif-Regular.ttf#Liberation Serif</FontFamily>
