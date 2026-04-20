@@ -237,6 +237,12 @@ public partial class MainWindow : Window, IViewportController
     {
         // Walk up from the source to find a PageItem DataContext
         var source = e.Source as Control;
+
+        // Clicks on the page surface commit and release the page-number input — the
+        // ScrollViewer/canvas aren't focusable, so without this the TextBox keeps focus.
+        // Only steal focus when the click isn't inside the TextBox itself.
+        if (PageInput.IsFocused && !IsDescendantOf(source, PageInput)) Focus();
+
         var page = source != null ? VisualTreeHelpers.FindPageItemFromControl(source) : null;
         if (page == null)
         {
@@ -279,6 +285,13 @@ public partial class MainWindow : Window, IViewportController
             // Plain click on unselected page or multi-selected: exclusive select
             ViewModel.SelectPage(page, false, false);
         }
+    }
+
+    private static bool IsDescendantOf(Control? control, Control ancestor)
+    {
+        for (Control? c = control; c != null; c = c.Parent as Control)
+            if (ReferenceEquals(c, ancestor)) return true;
+        return false;
     }
 
     private static bool IsPageActionControl(Control? source)

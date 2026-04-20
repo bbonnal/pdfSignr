@@ -44,12 +44,10 @@ public partial class MainViewModel
             return;
         }
 
-        if (SignatureSvgPath == null)
-        {
-            var path = await _fileDialogs.PickOpenFileAsync("Select Signature", ["*.svg", "*.png", "*.jpg", "*.jpeg"]);
-            if (path == null) return;
-            SignatureSvgPath = path;
-        }
+        // Always re-prompt so the user can choose a different signature/graphic each time.
+        var path = await _fileDialogs.PickOpenFileAsync("Select Signature", ["*.svg", "*.png", "*.jpg", "*.jpeg"]);
+        if (path == null) return;
+        SignatureSvgPath = path;
 
         CurrentTool = ToolMode.Signature;
     }

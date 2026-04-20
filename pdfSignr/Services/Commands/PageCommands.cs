@@ -103,6 +103,53 @@ public sealed class DeletePagesCommand : IUndoableCommand
     }
 }
 
+/// <summary>
+/// Inserts a contiguous range of pages at a specific index and restores the page-selection
+/// to the inserted pages on redo, to the prior selection on undo. Used by Ctrl-V on pages.
+/// </summary>
+public sealed class DuplicatePagesCommand : IUndoableCommand
+{
+    public string Description => _inserted.Count == 1 ? "Paste page" : $"Paste {_inserted.Count} pages";
+
+    private readonly ObservableCollection<PageItem> _pages;
+    private readonly IReadOnlyList<PageItem> _inserted;
+    private readonly int _insertAt;
+    private readonly IReadOnlyList<PageItem> _priorSelection;
+    private readonly Action _afterApply;
+
+    public DuplicatePagesCommand(
+        ObservableCollection<PageItem> pages,
+        IReadOnlyList<PageItem> inserted,
+        int insertAt,
+        IReadOnlyList<PageItem> priorSelection,
+        Action afterApply)
+    {
+        _pages = pages;
+        _inserted = inserted;
+        _insertAt = insertAt;
+        _priorSelection = priorSelection;
+        _afterApply = afterApply;
+    }
+
+    public void Execute()
+    {
+        for (int i = 0; i < _inserted.Count; i++)
+            _pages.Insert(_insertAt + i, _inserted[i]);
+        foreach (var p in _pages) p.IsSelected = false;
+        foreach (var p in _inserted) p.IsSelected = true;
+        _afterApply();
+    }
+
+    public void Undo()
+    {
+        for (int i = _inserted.Count - 1; i >= 0; i--)
+            _pages.RemoveAt(_insertAt + i);
+        foreach (var p in _pages) p.IsSelected = false;
+        foreach (var p in _priorSelection) p.IsSelected = true;
+        _afterApply();
+    }
+}
+
 /// <summary>Inserts a contiguous range of pages at a specific index.</summary>
 public sealed class InsertPagesCommand : IUndoableCommand
 {

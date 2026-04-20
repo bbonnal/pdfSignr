@@ -55,6 +55,25 @@ public partial class PageItem : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Deep copy suitable for a paste operation: same source PDF bytes and rotation,
+    /// cloned annotations, no bitmap (the view will render one on demand).
+    /// </summary>
+    public PageItem Clone()
+    {
+        var copy = new PageItem
+        {
+            Source = Source,
+            ParentVM = ParentVM,
+            OriginalWidthPt = OriginalWidthPt,
+            OriginalHeightPt = OriginalHeightPt,
+            RotationDegrees = RotationDegrees,
+        };
+        foreach (var ann in Annotations)
+            copy.Annotations.Add(ann.Clone());
+        return copy;
+    }
+
     /// <summary>Swaps the page bitmap and disposes the old one. Must be called on the UI thread.</summary>
     public void ReplaceBitmap(Bitmap? newBitmap)
     {

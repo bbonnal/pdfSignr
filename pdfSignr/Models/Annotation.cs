@@ -18,6 +18,9 @@ public abstract partial class Annotation : ObservableObject, IDisposable
     public abstract double WidthPt { get; set; }
     public abstract double HeightPt { get; set; }
 
+    /// <summary>Deep copy of this annotation, unselected, ready to be added to a page.</summary>
+    public abstract Annotation Clone();
+
     public virtual void Dispose() { }
 }
 
@@ -79,6 +82,13 @@ public partial class TextAnnotation : Annotation
         if (Catalog != null) return Catalog.GetMeasureFontFamily(pdfFont);
         return new FontFamily("Sans Serif");
     }
+
+    public override Annotation Clone() => new TextAnnotation
+    {
+        X = X, Y = Y, Rotation = Rotation, PageIndex = PageIndex,
+        Text = Text, FontFamily = FontFamily,
+        WidthPt = WidthPt, HeightPt = HeightPt,
+    };
 }
 
 /// <summary>Annotation backed by an external file (SVG vector or raster PNG/JPG).</summary>
@@ -133,6 +143,20 @@ public partial class SvgAnnotation : Annotation
             throw new InvalidOperationException($"{nameof(SvgAnnotation)}.{nameof(Renderer)} not initialized");
         var bitmap = Renderer.RenderForAnnotation(this, dpi);
         ReplaceRenderedBitmap(bitmap, dpi);
+    }
+
+    public override Annotation Clone()
+    {
+        var copy = new SvgAnnotation
+        {
+            X = X, Y = Y, Rotation = Rotation, PageIndex = PageIndex,
+            SvgFilePath = SvgFilePath, Scale = Scale, IsRaster = IsRaster,
+            OriginalWidthPt = OriginalWidthPt, OriginalHeightPt = OriginalHeightPt,
+            WidthPt = WidthPt, HeightPt = HeightPt,
+        };
+        if (Renderer != null && !string.IsNullOrEmpty(SvgFilePath) && File.Exists(SvgFilePath))
+            copy.ReRender(RenderedDpi > 0 ? RenderedDpi : PdfConstants.RenderDpi);
+        return copy;
     }
 
     public override void Dispose()

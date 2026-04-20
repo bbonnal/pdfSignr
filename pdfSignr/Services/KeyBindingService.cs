@@ -120,6 +120,10 @@ public class KeyBindingService : IKeyBindingService
             (vm, vp) => DeleteSelected(vm, vp));
         Add("delete-back", new(Key.Back, KeyModifiers.None), "Backspace", "Delete annotation / selected pages", "Pages",
             (vm, vp) => DeleteSelected(vm, vp));
+        Add("copy", new(Key.C, KeyModifiers.Control), "Ctrl+C", "Copy annotation / selected pages", "Pages",
+            (vm, _) => vm.CopySelection());
+        Add("paste", new(Key.V, KeyModifiers.Control), "Ctrl+V", "Paste annotation / pages", "Pages",
+            (vm, _) => vm.PasteClipboard());
 
         // ═══ Tools ═══
         Add("tool-text", new(Key.A, KeyModifiers.None), "A", "Add text annotation", "Tools",

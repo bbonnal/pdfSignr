@@ -20,6 +20,7 @@ public partial class MainViewModel : ObservableObject
     private readonly IFontCatalog _fontCatalog;
     private readonly ISvgRenderService _svgRenderer;
     private readonly IDialogService _dialogs;
+    private readonly AppClipboardService _clipboard;
 
     [ObservableProperty] private string? _pdfFilePath;
     [ObservableProperty] private ObservableCollection<PageItem> _pages = new();
@@ -107,7 +108,8 @@ public partial class MainViewModel : ObservableObject
     public MainViewModel(IFileDialogService fileDialogs, IPdfRenderService renderService,
         IPdfSaveService saveService, IPdfCompressService compressService,
         IFontCatalog fontCatalog, ISvgRenderService svgRenderer,
-        IDialogService dialogs, ViewportViewModel viewport, UndoRedoService undoRedo)
+        IDialogService dialogs, ViewportViewModel viewport, UndoRedoService undoRedo,
+        AppClipboardService clipboard)
     {
         _fileDialogs = fileDialogs;
         _renderService = renderService;
@@ -116,6 +118,7 @@ public partial class MainViewModel : ObservableObject
         _fontCatalog = fontCatalog;
         _svgRenderer = svgRenderer;
         _dialogs = dialogs;
+        _clipboard = clipboard;
         Viewport = viewport;
         UndoRedo = undoRedo;
         Pages.CollectionChanged += OnPagesCollectionChanged;

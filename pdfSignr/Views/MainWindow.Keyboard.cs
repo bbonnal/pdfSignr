@@ -21,7 +21,20 @@ public partial class MainWindow
             return;
         }
 
+        // Escape during a page drag must abort the drag — before the generic Esc binding
+        // clears selection, because the selection is what the user is dragging.
+        if (e.Key == Key.Escape && IsPageDragActive)
+        {
+            CancelPageDrag();
+            e.Handled = true;
+            return;
+        }
+
         base.OnKeyDown(e);
+        // If a focused control (e.g. the page-number TextBox) already handled the key
+        // for its own purposes — Ctrl+C/Ctrl+V on text, Enter to commit, etc. — don't
+        // double-fire the app-level binding.
+        if (e.Handled) return;
 
         var chord = new KeyChord(e.Key, e.KeyModifiers);
         if (_keyBindingService.TryDispatch(chord, ViewModel, this))

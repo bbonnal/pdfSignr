@@ -18,9 +18,12 @@ public partial class MainWindow
     private List<PageItem>? _dragSourcePages; // non-null when dragging a multi-selection
     private Point _dragStartPos;
     private Border? _dragAdorner;
+    private Border? _dragHandle; // border that owns the pointer capture and the move/release handlers
     private int _dropTargetIndex = -1;
     private static readonly Cursor BorderDragCursor = new(StandardCursorType.Hand);
     private Border? _lastCursorBorder;
+
+    public bool IsPageDragActive => _pageDragPending || _pageDragging;
 
     // File drag-and-drop state
     private int _dragEnterCount;
@@ -37,6 +40,7 @@ public partial class MainWindow
             : null;
         _dragStartPos = e.GetPosition(this);
         _dropTargetIndex = -1;
+        _dragHandle = border;
 
         e.Pointer.Capture(border);
         border.PointerMoved += OnDragHandleMoved;
@@ -108,12 +112,7 @@ public partial class MainWindow
 
     private void OnDragHandleReleased(object? sender, PointerReleasedEventArgs e)
     {
-        if (sender is Control handle)
-        {
-            handle.PointerMoved -= OnDragHandleMoved;
-            handle.PointerReleased -= OnDragHandleReleased;
-            e.Pointer.Capture(null);
-        }
+        DetachDragHandle(sender as Control, e.Pointer);
 
         if (_pageDragging && _dragSourcePage != null && _dropTargetIndex >= 0)
         {
@@ -134,6 +133,30 @@ public partial class MainWindow
             }
         }
 
+        ResetDragState();
+        e.Handled = true;
+    }
+
+    /// <summary>Aborts an in-flight page drag without committing any move.</summary>
+    public void CancelPageDrag()
+    {
+        if (!IsPageDragActive) return;
+        DetachDragHandle(_dragHandle, pointer: null);
+        ResetDragState();
+    }
+
+    private void DetachDragHandle(Control? handle, IPointer? pointer)
+    {
+        if (handle != null)
+        {
+            handle.PointerMoved -= OnDragHandleMoved;
+            handle.PointerReleased -= OnDragHandleReleased;
+        }
+        pointer?.Capture(null);
+    }
+
+    private void ResetDragState()
+    {
         RemoveDragAdorner();
         ViewModel.ClearDropTargets();
         _pageDragPending = false;
@@ -141,8 +164,8 @@ public partial class MainWindow
         _dragSourcePage = null;
         _dragSourcePages = null;
         _dropTargetIndex = -1;
+        _dragHandle = null;
         ViewModel.IsDraggingPage = false;
-        e.Handled = true;
     }
 
     private void CreateDragAdorner(Point pos)

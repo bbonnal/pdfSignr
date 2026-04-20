@@ -72,6 +72,7 @@ public partial class App : Application
         services.AddSingleton<IFontCatalog, FontCatalog>();
         services.AddSingleton<FontResolver>();
         services.AddSingleton<IDialogService, DialogService>();
+        services.AddSingleton<AppClipboardService>();
 
         // ViewModels
         services.AddSingleton<ViewportViewModel>();
