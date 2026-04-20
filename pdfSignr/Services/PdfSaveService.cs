@@ -20,8 +20,7 @@ public class PdfSaveService : IPdfSaveService
 
     public async Task<SaveResult> SaveAsync(
         string outputPath,
-        IEnumerable<(PageSource Source, int RotationDegrees, double OriginalWidthPt, double OriginalHeightPt,
-            IEnumerable<Annotation> Annotations)> pages,
+        IEnumerable<(PageSource Source, int RotationDegrees, IEnumerable<Annotation> Annotations)> pages,
         string? outputPassword = null,
         IProgress<int>? progress = null,
         CancellationToken ct = default)
@@ -41,7 +40,7 @@ public class PdfSaveService : IPdfSaveService
                 for (int pageIdx = 0; pageIdx < totalPages; pageIdx++)
                 {
                     ct.ThrowIfCancellationRequested();
-                    var (source, rotationDegrees, origW, origH, annotations) = pageList[pageIdx];
+                    var (source, rotationDegrees, annotations) = pageList[pageIdx];
 
                     if (!sourceDocCache.TryGetValue(source.PdfBytes, out var sourceDoc))
                     {
@@ -56,20 +55,13 @@ public class PdfSaveService : IPdfSaveService
                     var sourcePage = sourceDoc.Pages[source.SourcePageIndex];
                     var importedPage = outputDoc.AddPage(sourcePage);
 
-                    // Total rotation the saved page will be viewed at = source's intrinsic /Rotate
+                    // Total rotation the saved page is viewed at = source's intrinsic /Rotate
                     // plus the user's in-app rotation.
                     int sourceRotation = ((sourcePage.Rotate % 360) + 360) % 360;
                     int totalRotation = ((sourceRotation + rotationDegrees) % 360 + 360) % 360;
-                    if (rotationDegrees != 0)
-                        importedPage.Rotate = totalRotation;
+                    importedPage.Rotate = totalRotation;
 
                     var annList = annotations.ToList();
-
-                    _logger.LogInformation(
-                        "Save page {PageIdx}: sourceRotate={SrcRot}, userRotate={UserRot}, totalRotation={Total}, " +
-                        "underlying size={UW}x{UH}pt (from sourcePage), origW/H (from pdfium)={OrigW}x{OrigH}, annCount={N}",
-                        pageIdx, sourceRotation, rotationDegrees, totalRotation,
-                        sourcePage.Width.Point, sourcePage.Height.Point, origW, origH, annList.Count);
                     if (annList.Count > 0)
                     {
                         using var gfx = XGraphics.FromPdfPage(importedPage, XGraphicsPdfPageOptions.Append);

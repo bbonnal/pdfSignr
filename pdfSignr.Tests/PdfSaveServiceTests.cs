@@ -36,11 +36,11 @@ public class PdfSaveServiceTests : IDisposable
     private static PdfSaveService NewService() =>
         new(new FakeSvgRenderService(), NullLogger<PdfSaveService>.Instance);
 
-    private static IEnumerable<(PageSource, int, double, double, IEnumerable<Annotation>)>
+    private static IEnumerable<(PageSource, int, IEnumerable<Annotation>)>
         ToPages(byte[] pdfBytes, int count, int rotation = 0) =>
         Enumerable.Range(0, count).Select(i =>
-            ((PageSource, int, double, double, IEnumerable<Annotation>))
-            (new PageSource(pdfBytes, i), rotation, 612.0, 792.0, Array.Empty<Annotation>()));
+            ((PageSource, int, IEnumerable<Annotation>))
+            (new PageSource(pdfBytes, i), rotation, Array.Empty<Annotation>()));
 
     [Fact]
     public async Task SaveAsync_NoAnnotations_RoundTripsPageCount()

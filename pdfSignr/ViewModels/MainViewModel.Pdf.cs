@@ -165,8 +165,7 @@ public partial class MainViewModel
         if (outputPath == null) return;
 
         var pagesWithAnnotations = pages
-            .Select(p => (p.Source, p.RotationDegrees, p.OriginalWidthPt, p.OriginalHeightPt,
-                          (IEnumerable<Annotation>)p.Annotations));
+            .Select(p => (p.Source, p.RotationDegrees, (IEnumerable<Annotation>)p.Annotations));
 
         var progress = new Progress<int>(p => BaseStatus = $"Saving\u2026 {p}%");
         try
@@ -207,8 +206,7 @@ public partial class MainViewModel
         try
         {
             var pagesInRange = Pages.Skip(from - 1).Take(to - from + 1)
-                .Select(p => (p.Source, p.RotationDegrees, p.OriginalWidthPt, p.OriginalHeightPt,
-                              (IEnumerable<Annotation>)p.Annotations));
+                .Select(p => (p.Source, p.RotationDegrees, (IEnumerable<Annotation>)p.Annotations));
             await _saveService.SaveAsync(outputPath, pagesInRange, outPw, progress);
             BaseStatus = from == to
                 ? $"Page {from} saved to {Path.GetFileName(outputPath)}"

@@ -81,6 +81,40 @@ public class AnnotationPlacementTests : IDisposable
         return ms.ToArray();
     }
 
+    private const string BlackRectSvgContent =
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 50\" width=\"100\" height=\"50\">" +
+        "<rect x=\"0\" y=\"0\" width=\"100\" height=\"50\" fill=\"black\"/></svg>";
+
+    private static string WriteBlackRectSvg(string dir, string fileName)
+    {
+        var path = Path.Combine(dir, fileName);
+        File.WriteAllText(path, BlackRectSvgContent);
+        return path;
+    }
+
+    /// <summary>
+    /// Returns the bounding box of dark pixels (Red &lt; 80) in the rendered bitmap, in PDF points
+    /// (top-left origin). Returns null if no dark pixels are found.
+    /// </summary>
+    private static (double Left, double Top, double Right, double Bottom)? FindDarkBboxPt(
+        SkiaSharp.SKBitmap bitmap, int dpi, byte darknessThreshold = 80)
+    {
+        double ptToPx = dpi / 72.0;
+        int w = bitmap.Width, h = bitmap.Height;
+        int minX = w, minY = h, maxX = -1, maxY = -1;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                if (bitmap.GetPixel(x, y).Red < darknessThreshold)
+                {
+                    if (x < minX) minX = x;
+                    if (y < minY) minY = y;
+                    if (x > maxX) maxX = x;
+                    if (y > maxY) maxY = y;
+                }
+        if (maxX < 0) return null;
+        return (minX / ptToPx, minY / ptToPx, maxX / ptToPx, maxY / ptToPx);
+    }
+
     private static void RenderAndSavePng(string pdfPath, string pngPath)
     {
         using var ms = new MemoryStream(File.ReadAllBytes(pdfPath));
@@ -110,8 +144,8 @@ public class AnnotationPlacementTests : IDisposable
 
         var pages = new[]
         {
-            ((PageSource, int, double, double, IEnumerable<Annotation>))
-            (new PageSource(bytes, 0), 0, 612.0, 792.0, new Annotation[] { text })
+            ((PageSource, int, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 0, new Annotation[] { text })
         };
 
         var svc = new PdfSaveService(new NullSvgRenderService(), NullLogger<PdfSaveService>.Instance);
@@ -156,8 +190,8 @@ public class AnnotationPlacementTests : IDisposable
 
         var pages = new[]
         {
-            ((PageSource, int, double, double, IEnumerable<Annotation>))
-            (new PageSource(bytes, 0), 0, 612.0, 792.0, (IEnumerable<Annotation>)anns)
+            ((PageSource, int, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 0, (IEnumerable<Annotation>)anns)
         };
 
         var svc = new PdfSaveService(new NullSvgRenderService(), NullLogger<PdfSaveService>.Instance);
@@ -206,8 +240,8 @@ public class AnnotationPlacementTests : IDisposable
 
         var pages = new[]
         {
-            ((PageSource, int, double, double, IEnumerable<Annotation>))
-            (new PageSource(bytes, 0), 0, pdfW, pdfH, (IEnumerable<Annotation>)anns)
+            ((PageSource, int, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 0, (IEnumerable<Annotation>)anns)
         };
 
         var saveService = new PdfSaveService(new NullSvgRenderService(), NullLogger<PdfSaveService>.Instance);
@@ -266,8 +300,8 @@ public class AnnotationPlacementTests : IDisposable
 
         var pages = new[]
         {
-            ((PageSource, int, double, double, IEnumerable<Annotation>))
-            (new PageSource(bytes, 0), 0, pdfW, pdfH, (IEnumerable<Annotation>)anns)
+            ((PageSource, int, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 0, (IEnumerable<Annotation>)anns)
         };
 
         var saveService = new PdfSaveService(new NullSvgRenderService(), NullLogger<PdfSaveService>.Instance);
@@ -325,8 +359,8 @@ public class AnnotationPlacementTests : IDisposable
         var outPath = Path.Combine(_dir, $"compound_s{sourceRotation}_u{userRotation}.pdf");
         var pages = new[]
         {
-            ((PageSource, int, double, double, IEnumerable<Annotation>))
-            (new PageSource(bytes, 0), userRotation, visualW, visualH, (IEnumerable<Annotation>)anns)
+            ((PageSource, int, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), userRotation, (IEnumerable<Annotation>)anns)
         };
 
         var svc = new PdfSaveService(new NullSvgRenderService(), NullLogger<PdfSaveService>.Instance);
@@ -401,8 +435,8 @@ public class AnnotationPlacementTests : IDisposable
 
         var pages = new[]
         {
-            ((PageSource, int, double, double, IEnumerable<Annotation>))
-            (new PageSource(bytes, 0), 0, pdfW, pdfH, new Annotation[] { text })
+            ((PageSource, int, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 0, new Annotation[] { text })
         };
 
         var outPath = Path.Combine(_dir, "text_src_rotated.pdf");
@@ -438,8 +472,8 @@ public class AnnotationPlacementTests : IDisposable
 
         var pages = new[]
         {
-            ((PageSource, int, double, double, IEnumerable<Annotation>))
-            (new PageSource(bytes, 0), 90, 612.0, 792.0, new Annotation[] { text })
+            ((PageSource, int, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 90, new Annotation[] { text })
         };
 
         var svc = new PdfSaveService(new NullSvgRenderService(), NullLogger<PdfSaveService>.Instance);
@@ -489,8 +523,8 @@ public class AnnotationPlacementTests : IDisposable
         var outPath = Path.Combine(_dir, "baseline.pdf");
         var pages = new[]
         {
-            ((PageSource, int, double, double, IEnumerable<Annotation>))
-            (new PageSource(bytes, 0), 0, 612.0, 792.0, new Annotation[] { ann })
+            ((PageSource, int, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 0, new Annotation[] { ann })
         };
         var svc = new PdfSaveService(new NullSvgRenderService(), NullLogger<PdfSaveService>.Instance);
         await svc.SaveAsync(outPath, pages);
@@ -555,8 +589,8 @@ public class AnnotationPlacementTests : IDisposable
         var svgSvc = new SvgRenderService(NullLogger<SvgRenderService>.Instance);
         var pages = new[]
         {
-            ((PageSource, int, double, double, IEnumerable<Annotation>))
-            (new PageSource(bytes, 0), 0, 612.0, 792.0, new Annotation[] { svgAnn })
+            ((PageSource, int, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 0, new Annotation[] { svgAnn })
         };
 
         var svc = new PdfSaveService(svgSvc, NullLogger<PdfSaveService>.Instance);
@@ -598,54 +632,35 @@ public class AnnotationPlacementTests : IDisposable
             bytes = ms.ToArray();
         }
 
-        var svc2 = new PdfRenderService();
-        var (pdfW, pdfH) = svc2.GetPageSize(bytes, 0);
+        var (pdfW, pdfH) = new PdfRenderService().GetPageSize(bytes, 0);
         _output.WriteLine($"Source MediaBox [50 50 662 842], pdfium reports: {pdfW}x{pdfH}");
 
         const double annX = 150, annY = 200, annW = 120, annH = 60;
-        // Use an SVG rect to get a crisp dark bounding box we can measure in the output.
-        var svgPath = Path.Combine(_dir, "mb_sig.svg");
-        File.WriteAllText(svgPath,
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 50\" width=\"100\" height=\"50\">" +
-            "<rect x=\"0\" y=\"0\" width=\"100\" height=\"50\" fill=\"black\"/></svg>");
         var svgAnn = new SvgAnnotation
         {
             X = annX, Y = annY, WidthPt = annW, HeightPt = annH,
-            SvgFilePath = svgPath, Scale = 1.0,
+            SvgFilePath = WriteBlackRectSvg(_dir, "mb_sig.svg"), Scale = 1.0,
             OriginalWidthPt = 75, OriginalHeightPt = 37.5, PageIndex = 0,
         };
 
         var outPath = Path.Combine(_dir, "mediabox_offset.pdf");
         var pages = new[]
         {
-            ((PageSource, int, double, double, IEnumerable<Annotation>))
-            (new PageSource(bytes, 0), 0, pdfW, pdfH, new Annotation[] { svgAnn })
+            ((PageSource, int, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 0, new Annotation[] { svgAnn })
         };
-        var svgSvc = new SvgRenderService(NullLogger<SvgRenderService>.Instance);
-        var saveService = new PdfSaveService(svgSvc, NullLogger<PdfSaveService>.Instance);
+        var saveService = new PdfSaveService(new SvgRenderService(NullLogger<SvgRenderService>.Instance),
+            NullLogger<PdfSaveService>.Instance);
         await saveService.SaveAsync(outPath, pages);
 
         const int dpi = 144;
         using var skBitmap = PDFtoImage.Conversion.ToImage(
             File.ReadAllBytes(outPath), 0, null, new PDFtoImage.RenderOptions(Dpi: dpi));
-        double ptToPx = dpi / 72.0;
-        int w = skBitmap.Width, h = skBitmap.Height;
-        int minX = w, minY = h, maxX = -1, maxY = -1;
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
-                if (skBitmap.GetPixel(x, y).Red < 80)
-                {
-                    if (x < minX) minX = x;
-                    if (y < minY) minY = y;
-                    if (x > maxX) maxX = x;
-                    if (y > maxY) maxY = y;
-                }
-
-        Assert.True(maxX > 0, "No dark pixels found in rendered PDF");
-        double leftPt = minX / ptToPx, topPt = minY / ptToPx;
-        _output.WriteLine($"SVG rect rendered at pt: L={leftPt:F2} T={topPt:F2} (expected L={annX} T={annY})");
-        Assert.InRange(leftPt, annX - 2, annX + 2);
-        Assert.InRange(topPt, annY - 2, annY + 2);
+        var bbox = FindDarkBboxPt(skBitmap, dpi);
+        Assert.NotNull(bbox);
+        _output.WriteLine($"SVG rect rendered at pt: L={bbox!.Value.Left:F2} T={bbox.Value.Top:F2} (expected L={annX} T={annY})");
+        Assert.InRange(bbox.Value.Left, annX - 2, annX + 2);
+        Assert.InRange(bbox.Value.Top, annY - 2, annY + 2);
     }
 
     [Theory]
@@ -673,24 +688,19 @@ public class AnnotationPlacementTests : IDisposable
 
         var (pdfW, pdfH) = new PdfRenderService().GetPageSize(bytes, 0);
 
-        var svgPath = Path.Combine(_dir, $"mbrot_{sourceRotation}.svg");
-        File.WriteAllText(svgPath,
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 50\" width=\"100\" height=\"50\">" +
-            "<rect x=\"0\" y=\"0\" width=\"100\" height=\"50\" fill=\"black\"/></svg>");
-
         const double annX = 100, annY = 150, annW = 80, annH = 40;
         var svgAnn = new SvgAnnotation
         {
             X = annX, Y = annY, WidthPt = annW, HeightPt = annH,
-            SvgFilePath = svgPath, Scale = 1.0,
+            SvgFilePath = WriteBlackRectSvg(_dir, $"mbrot_{sourceRotation}.svg"), Scale = 1.0,
             OriginalWidthPt = 75, OriginalHeightPt = 37.5, PageIndex = 0,
         };
 
         var outPath = Path.Combine(_dir, $"mbrot_{sourceRotation}.pdf");
         var pages = new[]
         {
-            ((PageSource, int, double, double, IEnumerable<Annotation>))
-            (new PageSource(bytes, 0), 0, pdfW, pdfH, new Annotation[] { svgAnn })
+            ((PageSource, int, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 0, new Annotation[] { svgAnn })
         };
         var svc = new PdfSaveService(new SvgRenderService(NullLogger<SvgRenderService>.Instance),
             NullLogger<PdfSaveService>.Instance);
@@ -699,22 +709,11 @@ public class AnnotationPlacementTests : IDisposable
         const int dpi = 144;
         using var skBitmap = PDFtoImage.Conversion.ToImage(
             File.ReadAllBytes(outPath), 0, null, new PDFtoImage.RenderOptions(Dpi: dpi));
-        double ptToPx = dpi / 72.0;
-        int w = skBitmap.Width, h = skBitmap.Height;
-        int minX = w, minY = h;
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
-                if (skBitmap.GetPixel(x, y).Red < 80)
-                {
-                    if (x < minX) minX = x;
-                    if (y < minY) minY = y;
-                }
-
-        Assert.True(minX < w, $"No dark pixels: annotation is off-page for source rotation {sourceRotation}");
-        double leftPt = minX / ptToPx, topPt = minY / ptToPx;
-        _output.WriteLine($"rot={sourceRotation}: rendered TL=({leftPt:F2}, {topPt:F2}) expected=({annX}, {annY})");
-        Assert.InRange(leftPt, annX - 2, annX + 2);
-        Assert.InRange(topPt, annY - 2, annY + 2);
+        var bbox = FindDarkBboxPt(skBitmap, dpi);
+        Assert.NotNull(bbox);
+        _output.WriteLine($"rot={sourceRotation}: rendered TL=({bbox!.Value.Left:F2}, {bbox.Value.Top:F2}) expected=({annX}, {annY})");
+        Assert.InRange(bbox.Value.Left, annX - 2, annX + 2);
+        Assert.InRange(bbox.Value.Top, annY - 2, annY + 2);
     }
 
     [Fact]
@@ -725,61 +724,38 @@ public class AnnotationPlacementTests : IDisposable
         // the "left and down" claim for signatures/SVGs specifically.
         var bytes = MakeBlankPdf();
         var outPath = Path.Combine(_dir, "svg_exact.pdf");
-        var svgPath = Path.Combine(_dir, "sig_exact.svg");
-        File.WriteAllText(svgPath,
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 50\" width=\"100\" height=\"50\">\n" +
-            "  <rect x=\"0\" y=\"0\" width=\"100\" height=\"50\" fill=\"black\"/>\n" +
-            "</svg>\n");
 
         const double annX = 180, annY = 240, annW = 120, annH = 60;
         var svgAnn = new SvgAnnotation
         {
-            X = annX, Y = annY,
-            SvgFilePath = svgPath,
+            X = annX, Y = annY, WidthPt = annW, HeightPt = annH,
+            SvgFilePath = WriteBlackRectSvg(_dir, "sig_exact.svg"),
             Scale = 1.0,
             OriginalWidthPt = 75, OriginalHeightPt = 37.5,
             PageIndex = 0,
         };
-        svgAnn.WidthPt = annW; svgAnn.HeightPt = annH;
 
-        var svgSvc = new SvgRenderService(NullLogger<SvgRenderService>.Instance);
         var pages = new[]
         {
-            ((PageSource, int, double, double, IEnumerable<Annotation>))
-            (new PageSource(bytes, 0), 0, 612.0, 792.0, new Annotation[] { svgAnn })
+            ((PageSource, int, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 0, new Annotation[] { svgAnn })
         };
-        var svc = new PdfSaveService(svgSvc, NullLogger<PdfSaveService>.Instance);
+        var svc = new PdfSaveService(new SvgRenderService(NullLogger<SvgRenderService>.Instance),
+            NullLogger<PdfSaveService>.Instance);
         await svc.SaveAsync(outPath, pages);
 
         const int dpi = 144;
         using var skBitmap = PDFtoImage.Conversion.ToImage(
             File.ReadAllBytes(outPath), 0, null, new PDFtoImage.RenderOptions(Dpi: dpi));
-        double ptToPx = dpi / 72.0;
-        int w = skBitmap.Width, h = skBitmap.Height;
-
-        // Find dark-pixel bounding box across the whole page.
-        int minX = w, minY = h, maxX = -1, maxY = -1;
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
-                if (skBitmap.GetPixel(x, y).Red < 80)
-                {
-                    if (x < minX) minX = x;
-                    if (y < minY) minY = y;
-                    if (x > maxX) maxX = x;
-                    if (y > maxY) maxY = y;
-                }
-
-        Assert.True(maxX > 0, "No dark pixels found in rendered PDF");
-        double leftPt = minX / ptToPx, topPt = minY / ptToPx;
-        double rightPt = maxX / ptToPx, bottomPt = maxY / ptToPx;
-        _output.WriteLine($"SVG rect rendered at pt: L={leftPt:F2} T={topPt:F2} R={rightPt:F2} B={bottomPt:F2} " +
+        var bbox = FindDarkBboxPt(skBitmap, dpi);
+        Assert.NotNull(bbox);
+        var (l, t, r, b) = bbox!.Value;
+        _output.WriteLine($"SVG rect rendered at pt: L={l:F2} T={t:F2} R={r:F2} B={b:F2} " +
                           $"(expected: L={annX} T={annY} R={annX + annW} B={annY + annH})");
-
-        Assert.InRange(leftPt, annX - 2, annX + 2);
-        Assert.InRange(topPt, annY - 2, annY + 2);
-        Assert.InRange(rightPt, annX + annW - 2, annX + annW + 2);
-        Assert.InRange(bottomPt, annY + annH - 2, annY + annH + 2);
+        Assert.InRange(l, annX - 2, annX + 2);
+        Assert.InRange(t, annY - 2, annY + 2);
+        Assert.InRange(r, annX + annW - 2, annX + annW + 2);
+        Assert.InRange(b, annY + annH - 2, annY + annH + 2);
     }
 
     private static string ExtractContentStreams(PdfPage page)
