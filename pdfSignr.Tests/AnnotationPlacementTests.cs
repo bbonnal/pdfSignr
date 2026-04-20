@@ -278,6 +278,91 @@ public class AnnotationPlacementTests : IDisposable
         _output.WriteLine($"Rendered rotation={sourceRotation} (visual {pdfW}x{pdfH}): {pngPath}");
     }
 
+    [Theory]
+    [InlineData(0, 0)] [InlineData(0, 90)] [InlineData(0, 180)] [InlineData(0, 270)]
+    [InlineData(90, 0)] [InlineData(90, 90)] [InlineData(90, 180)] [InlineData(90, 270)]
+    [InlineData(180, 0)] [InlineData(180, 90)] [InlineData(180, 180)] [InlineData(180, 270)]
+    [InlineData(270, 0)] [InlineData(270, 90)] [InlineData(270, 180)] [InlineData(270, 270)]
+    public async Task Compound_SourceAndUserRotation_AnnotationsStayOnPage(int sourceRotation, int userRotation)
+    {
+        // Build a source page with the given intrinsic /Rotate.
+        byte[] bytes;
+        using (var doc = new PdfDocument())
+        {
+            var p = doc.AddPage();
+            p.Width = PdfSharp.Drawing.XUnit.FromPoint(612);
+            p.Height = PdfSharp.Drawing.XUnit.FromPoint(792);
+            p.Rotate = sourceRotation;
+            using var ms = new MemoryStream();
+            doc.Save(ms, closeStream: false);
+            bytes = ms.ToArray();
+        }
+
+        // pdfium dims reflect the intrinsic rotation.
+        var (pdfW, pdfH) = new PdfRenderService().GetPageSize(bytes, 0);
+
+        // After the user rotates by userRotation, the visual view swaps when user is 90/270.
+        bool userSwapsAxes = userRotation is 90 or 270;
+        double visualW = userSwapsAxes ? pdfH : pdfW;
+        double visualH = userSwapsAxes ? pdfW : pdfH;
+
+        // Place a marker at each corner of the visual view — this is the coord space the user
+        // sees and places annotations in.
+        const double boxW = 100, boxH = 22;
+        var positions = new[]
+        {
+            (X: 20.0, Y: 20.0, label: "TL"),
+            (X: visualW - boxW - 20, Y: 20.0, label: "TR"),
+            (X: 20.0, Y: visualH - boxH - 20, label: "BL"),
+            (X: visualW - boxW - 20, Y: visualH - boxH - 20, label: "BR"),
+        };
+        var anns = positions.Select(p => (Annotation)new TextAnnotation
+        {
+            X = p.X, Y = p.Y, WidthPt = boxW, HeightPt = boxH,
+            Text = p.label, FontFamily = "Helvetica", PageIndex = 0
+        }).ToList();
+
+        var outPath = Path.Combine(_dir, $"compound_s{sourceRotation}_u{userRotation}.pdf");
+        var pages = new[]
+        {
+            ((PageSource, int, double, double, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), userRotation, visualW, visualH, (IEnumerable<Annotation>)anns)
+        };
+
+        var svc = new PdfSaveService(new NullSvgRenderService(), NullLogger<PdfSaveService>.Instance);
+        await svc.SaveAsync(outPath, pages);
+
+        var pngPath = Path.Combine(_dir, $"compound_s{sourceRotation}_u{userRotation}.png");
+        RenderAndSavePng(outPath, pngPath);
+        _output.WriteLine($"source={sourceRotation} user={userRotation} visual={visualW}x{visualH}: {pngPath}");
+
+        // Pixel-presence assertions: each corner label should produce darkness in its
+        // expected quadrant of the rendered PNG. This catches any transform that would
+        // push annotations off-page or into the wrong corner.
+        using var pngStream = File.OpenRead(pngPath);
+        using var skBitmap = SkiaSharp.SKBitmap.Decode(pngStream);
+        int w = skBitmap.Width, h = skBitmap.Height;
+        int halfW = w / 2, halfH = h / 2;
+
+        bool QuadrantHasDarkPixels(int x0, int y0, int x1, int y1)
+        {
+            int darkCount = 0;
+            for (int y = y0; y < y1; y += 2)
+                for (int x = x0; x < x1; x += 2)
+                    if (skBitmap.GetPixel(x, y).Red < 128) darkCount++;
+            return darkCount > 10;
+        }
+
+        Assert.True(QuadrantHasDarkPixels(0, 0, halfW, halfH),
+            $"TL missing in top-left quadrant (source={sourceRotation}, user={userRotation})");
+        Assert.True(QuadrantHasDarkPixels(halfW, 0, w, halfH),
+            $"TR missing in top-right quadrant (source={sourceRotation}, user={userRotation})");
+        Assert.True(QuadrantHasDarkPixels(0, halfH, halfW, h),
+            $"BL missing in bottom-left quadrant (source={sourceRotation}, user={userRotation})");
+        Assert.True(QuadrantHasDarkPixels(halfW, halfH, w, h),
+            $"BR missing in bottom-right quadrant (source={sourceRotation}, user={userRotation})");
+    }
+
     [Fact]
     public async Task TextAnnotation_SourcePageHasIntrinsicRotate_DoesItLandCorrectly()
     {
@@ -373,6 +458,79 @@ public class AnnotationPlacementTests : IDisposable
     }
 
     [Fact]
+    public async Task UiAndPdfText_BaselineAgreesWithinOnePoint()
+    {
+        // Invariant we want: drawing a TextAnnotation at (X, Y) in the UI, and saving the
+        // same annotation to PDF, should place the glyph baseline at the same Y coordinate
+        // modulo font metrics rounding. Avalonia's FormattedText is the UI's source of
+        // truth; the saved PDF must match its Baseline property.
+        const double annX = 150, annY = 300, annW = 200, annH = 40;
+        var ann = new TextAnnotation
+        {
+            X = annX, Y = annY, WidthPt = annW, HeightPt = annH,
+            Text = "Baseline", FontFamily = "Helvetica", PageIndex = 0
+        };
+
+        // UI baseline (ground truth): Avalonia FormattedText.Baseline is in DIPs at the
+        // FormattedText's font size (which is scaled by DpiScale for display). Convert
+        // back to PDF points to compare against the PDF output.
+        var typeface = new Avalonia.Media.Typeface(TextAnnotation.MapFontForMeasure(ann.FontFamily));
+        var ft = new Avalonia.Media.FormattedText(
+            ann.Text, System.Globalization.CultureInfo.InvariantCulture,
+            Avalonia.Media.FlowDirection.LeftToRight, typeface,
+            ann.FontSize * pdfSignr.Models.PdfConstants.DpiScale, Avalonia.Media.Brushes.Black);
+        double uiBaselinePt = ft.Baseline / pdfSignr.Models.PdfConstants.DpiScale;
+        double expectedBaselineAbsY = annY + uiBaselinePt;
+
+        // Render the saved PDF and find the darkest row within a tight window around the
+        // expected baseline. The text's baseline sits roughly at the bottom of most glyphs,
+        // so we look for the last dark row the text spans.
+        var bytes = MakeBlankPdf();
+        var outPath = Path.Combine(_dir, "baseline.pdf");
+        var pages = new[]
+        {
+            ((PageSource, int, double, double, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 0, 612.0, 792.0, new Annotation[] { ann })
+        };
+        var svc = new PdfSaveService(new NullSvgRenderService(), NullLogger<PdfSaveService>.Instance);
+        await svc.SaveAsync(outPath, pages);
+
+        const int dpi = 144;
+        using var skBitmap = PDFtoImage.Conversion.ToImage(
+            File.ReadAllBytes(outPath), 0, null, new PDFtoImage.RenderOptions(Dpi: dpi));
+        double ptToPx = dpi / 72.0;
+        int bitmapW = skBitmap.Width;
+
+        int FindTextBottomRow(int y0, int y1, int x0, int x1)
+        {
+            int bottom = -1;
+            for (int y = y0; y < y1; y++)
+            {
+                for (int x = x0; x < x1; x++)
+                {
+                    if (skBitmap.GetPixel(x, y).Red < 128) { bottom = y; break; }
+                }
+            }
+            return bottom;
+        }
+
+        int searchTop = (int)(annY * ptToPx) - 4;
+        int searchBottom = (int)((annY + annH) * ptToPx) + 4;
+        int searchLeft = (int)(annX * ptToPx) - 4;
+        int searchRight = (int)((annX + annW) * ptToPx) + 4;
+        int glyphBottomPx = FindTextBottomRow(searchTop, searchBottom, searchLeft, searchRight);
+        Assert.True(glyphBottomPx > 0, "No dark pixels found for 'Baseline' text in saved PDF");
+
+        double glyphBottomPt = glyphBottomPx / ptToPx;
+        double delta = glyphBottomPt - expectedBaselineAbsY;
+        _output.WriteLine($"UI baseline={expectedBaselineAbsY:F2}pt, PDF glyph bottom={glyphBottomPt:F2}pt, Δ={delta:F2}pt");
+        // Tolerance: descenders can extend a few points below baseline (the "e" in "Baseline"
+        // has no descender; "B/a/s/l/i/n" stop at the baseline). Typography descent for "e"
+        // at ~16pt is <1pt, so tolerate ±3pt to absorb font-metric rounding differences.
+        Assert.True(Math.Abs(delta) <= 3.0, $"UI vs PDF baseline mismatch: Δ={delta:F2}pt");
+    }
+
+    [Fact]
     public async Task SvgAnnotation_PdfContent_ShowsCoordinates()
     {
         var bytes = MakeBlankPdf();
@@ -417,6 +575,211 @@ public class AnnotationPlacementTests : IDisposable
         var pngPath = Path.Combine(_dir, "svg.png");
         RenderAndSavePng(outPath, pngPath);
         _output.WriteLine($"Rendered PNG: {pngPath}");
+    }
+
+    [Fact]
+    public async Task TextAnnotation_SourcePageHasNonZeroMediaBoxOrigin()
+    {
+        // Real-world PDFs (scans, imposition layouts) often ship with a MediaBox whose
+        // origin is NOT (0,0). Assert that an annotation placed at (X, Y) still lands at
+        // visual (X, Y) on the rendered page in that case — otherwise annotations drift
+        // by the MediaBox offset, which matches the user's "left and down" symptom for
+        // PDFs whose MediaBox is shifted up-right of (0,0).
+        byte[] bytes;
+        using (var doc = new PdfDocument())
+        {
+            var p = doc.AddPage();
+            // MediaBox origin at (50, 50), content 612×792.
+            p.MediaBox = new PdfSharp.Pdf.PdfRectangle(
+                new PdfSharp.Drawing.XPoint(50, 50),
+                new PdfSharp.Drawing.XPoint(50 + 612, 50 + 792));
+            using var ms = new MemoryStream();
+            doc.Save(ms, closeStream: false);
+            bytes = ms.ToArray();
+        }
+
+        var svc2 = new PdfRenderService();
+        var (pdfW, pdfH) = svc2.GetPageSize(bytes, 0);
+        _output.WriteLine($"Source MediaBox [50 50 662 842], pdfium reports: {pdfW}x{pdfH}");
+
+        const double annX = 150, annY = 200, annW = 120, annH = 60;
+        // Use an SVG rect to get a crisp dark bounding box we can measure in the output.
+        var svgPath = Path.Combine(_dir, "mb_sig.svg");
+        File.WriteAllText(svgPath,
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 50\" width=\"100\" height=\"50\">" +
+            "<rect x=\"0\" y=\"0\" width=\"100\" height=\"50\" fill=\"black\"/></svg>");
+        var svgAnn = new SvgAnnotation
+        {
+            X = annX, Y = annY, WidthPt = annW, HeightPt = annH,
+            SvgFilePath = svgPath, Scale = 1.0,
+            OriginalWidthPt = 75, OriginalHeightPt = 37.5, PageIndex = 0,
+        };
+
+        var outPath = Path.Combine(_dir, "mediabox_offset.pdf");
+        var pages = new[]
+        {
+            ((PageSource, int, double, double, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 0, pdfW, pdfH, new Annotation[] { svgAnn })
+        };
+        var svgSvc = new SvgRenderService(NullLogger<SvgRenderService>.Instance);
+        var saveService = new PdfSaveService(svgSvc, NullLogger<PdfSaveService>.Instance);
+        await saveService.SaveAsync(outPath, pages);
+
+        const int dpi = 144;
+        using var skBitmap = PDFtoImage.Conversion.ToImage(
+            File.ReadAllBytes(outPath), 0, null, new PDFtoImage.RenderOptions(Dpi: dpi));
+        double ptToPx = dpi / 72.0;
+        int w = skBitmap.Width, h = skBitmap.Height;
+        int minX = w, minY = h, maxX = -1, maxY = -1;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                if (skBitmap.GetPixel(x, y).Red < 80)
+                {
+                    if (x < minX) minX = x;
+                    if (y < minY) minY = y;
+                    if (x > maxX) maxX = x;
+                    if (y > maxY) maxY = y;
+                }
+
+        Assert.True(maxX > 0, "No dark pixels found in rendered PDF");
+        double leftPt = minX / ptToPx, topPt = minY / ptToPx;
+        _output.WriteLine($"SVG rect rendered at pt: L={leftPt:F2} T={topPt:F2} (expected L={annX} T={annY})");
+        Assert.InRange(leftPt, annX - 2, annX + 2);
+        Assert.InRange(topPt, annY - 2, annY + 2);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(90)]
+    [InlineData(180)]
+    [InlineData(270)]
+    public async Task MediaBoxOffset_Combined_WithSourceRotation(int sourceRotation)
+    {
+        // MediaBox offset combined with /Rotate was the worst case: in the broken build,
+        // annotations landed outside the page on rotated pages. Verify the compensation
+        // composes correctly with ApplyVisualTransform across all rotations.
+        byte[] bytes;
+        using (var doc = new PdfDocument())
+        {
+            var p = doc.AddPage();
+            p.MediaBox = new PdfSharp.Pdf.PdfRectangle(
+                new PdfSharp.Drawing.XPoint(30, 40),
+                new PdfSharp.Drawing.XPoint(30 + 612, 40 + 792));
+            p.Rotate = sourceRotation;
+            using var ms = new MemoryStream();
+            doc.Save(ms, closeStream: false);
+            bytes = ms.ToArray();
+        }
+
+        var (pdfW, pdfH) = new PdfRenderService().GetPageSize(bytes, 0);
+
+        var svgPath = Path.Combine(_dir, $"mbrot_{sourceRotation}.svg");
+        File.WriteAllText(svgPath,
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 50\" width=\"100\" height=\"50\">" +
+            "<rect x=\"0\" y=\"0\" width=\"100\" height=\"50\" fill=\"black\"/></svg>");
+
+        const double annX = 100, annY = 150, annW = 80, annH = 40;
+        var svgAnn = new SvgAnnotation
+        {
+            X = annX, Y = annY, WidthPt = annW, HeightPt = annH,
+            SvgFilePath = svgPath, Scale = 1.0,
+            OriginalWidthPt = 75, OriginalHeightPt = 37.5, PageIndex = 0,
+        };
+
+        var outPath = Path.Combine(_dir, $"mbrot_{sourceRotation}.pdf");
+        var pages = new[]
+        {
+            ((PageSource, int, double, double, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 0, pdfW, pdfH, new Annotation[] { svgAnn })
+        };
+        var svc = new PdfSaveService(new SvgRenderService(NullLogger<SvgRenderService>.Instance),
+            NullLogger<PdfSaveService>.Instance);
+        await svc.SaveAsync(outPath, pages);
+
+        const int dpi = 144;
+        using var skBitmap = PDFtoImage.Conversion.ToImage(
+            File.ReadAllBytes(outPath), 0, null, new PDFtoImage.RenderOptions(Dpi: dpi));
+        double ptToPx = dpi / 72.0;
+        int w = skBitmap.Width, h = skBitmap.Height;
+        int minX = w, minY = h;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                if (skBitmap.GetPixel(x, y).Red < 80)
+                {
+                    if (x < minX) minX = x;
+                    if (y < minY) minY = y;
+                }
+
+        Assert.True(minX < w, $"No dark pixels: annotation is off-page for source rotation {sourceRotation}");
+        double leftPt = minX / ptToPx, topPt = minY / ptToPx;
+        _output.WriteLine($"rot={sourceRotation}: rendered TL=({leftPt:F2}, {topPt:F2}) expected=({annX}, {annY})");
+        Assert.InRange(leftPt, annX - 2, annX + 2);
+        Assert.InRange(topPt, annY - 2, annY + 2);
+    }
+
+    [Fact]
+    public async Task SvgAnnotation_RendersAtExactPosition()
+    {
+        // A solid-black SVG rect placed at a known (X, Y, W, H) must render in the saved
+        // PDF with a dark bounding box matching (X, Y) within a few points. This closes
+        // the "left and down" claim for signatures/SVGs specifically.
+        var bytes = MakeBlankPdf();
+        var outPath = Path.Combine(_dir, "svg_exact.pdf");
+        var svgPath = Path.Combine(_dir, "sig_exact.svg");
+        File.WriteAllText(svgPath,
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 50\" width=\"100\" height=\"50\">\n" +
+            "  <rect x=\"0\" y=\"0\" width=\"100\" height=\"50\" fill=\"black\"/>\n" +
+            "</svg>\n");
+
+        const double annX = 180, annY = 240, annW = 120, annH = 60;
+        var svgAnn = new SvgAnnotation
+        {
+            X = annX, Y = annY,
+            SvgFilePath = svgPath,
+            Scale = 1.0,
+            OriginalWidthPt = 75, OriginalHeightPt = 37.5,
+            PageIndex = 0,
+        };
+        svgAnn.WidthPt = annW; svgAnn.HeightPt = annH;
+
+        var svgSvc = new SvgRenderService(NullLogger<SvgRenderService>.Instance);
+        var pages = new[]
+        {
+            ((PageSource, int, double, double, IEnumerable<Annotation>))
+            (new PageSource(bytes, 0), 0, 612.0, 792.0, new Annotation[] { svgAnn })
+        };
+        var svc = new PdfSaveService(svgSvc, NullLogger<PdfSaveService>.Instance);
+        await svc.SaveAsync(outPath, pages);
+
+        const int dpi = 144;
+        using var skBitmap = PDFtoImage.Conversion.ToImage(
+            File.ReadAllBytes(outPath), 0, null, new PDFtoImage.RenderOptions(Dpi: dpi));
+        double ptToPx = dpi / 72.0;
+        int w = skBitmap.Width, h = skBitmap.Height;
+
+        // Find dark-pixel bounding box across the whole page.
+        int minX = w, minY = h, maxX = -1, maxY = -1;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                if (skBitmap.GetPixel(x, y).Red < 80)
+                {
+                    if (x < minX) minX = x;
+                    if (y < minY) minY = y;
+                    if (x > maxX) maxX = x;
+                    if (y > maxY) maxY = y;
+                }
+
+        Assert.True(maxX > 0, "No dark pixels found in rendered PDF");
+        double leftPt = minX / ptToPx, topPt = minY / ptToPx;
+        double rightPt = maxX / ptToPx, bottomPt = maxY / ptToPx;
+        _output.WriteLine($"SVG rect rendered at pt: L={leftPt:F2} T={topPt:F2} R={rightPt:F2} B={bottomPt:F2} " +
+                          $"(expected: L={annX} T={annY} R={annX + annW} B={annY + annH})");
+
+        Assert.InRange(leftPt, annX - 2, annX + 2);
+        Assert.InRange(topPt, annY - 2, annY + 2);
+        Assert.InRange(rightPt, annX + annW - 2, annX + annW + 2);
+        Assert.InRange(bottomPt, annY + annH - 2, annY + annH + 2);
     }
 
     private static string ExtractContentStreams(PdfPage page)

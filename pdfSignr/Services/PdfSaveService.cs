@@ -80,6 +80,16 @@ public class PdfSaveService : IPdfSaveService
                         // correctly after the viewer applies /Rotate.
                         double underlyingW = sourcePage.Width.Point;
                         double underlyingH = sourcePage.Height.Point;
+
+                        // PdfSharp XGraphics treats the page as if MediaBox origin were (0,0).
+                        // For PDFs with a non-zero MediaBox origin (common in scans and imposed
+                        // documents), drawings land shifted by (-X1, +Y1) in the rendered visual
+                        // space. Compensate by translating first, so subsequent transforms and
+                        // draws operate in MediaBox-relative coords.
+                        var mb = importedPage.MediaBox;
+                        if (mb.X1 != 0 || mb.Y1 != 0)
+                            gfx.TranslateTransform(mb.X1, -mb.Y1);
+
                         ApplyVisualTransform(gfx, totalRotation, underlyingW, underlyingH);
 
                         foreach (var annotation in annList)
