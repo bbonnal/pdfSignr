@@ -139,9 +139,28 @@
               <PathIcon Data="{iconr:IconGeometry Icon=magnifying_glass_plus}" Foreground="{DynamicResource IconForeground}" Width="15" Height="15" />
             </Button>
           </StackPanel>
-          <!-- Left: status text -->
-          <TextBlock Text="{Binding StatusText}" FontSize="11" Opacity="0.6"
-                     VerticalAlignment="Center" />
+          <!-- Left: status text + editable page navigator -->
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="0">
+            <TextBlock Text="{Binding StatusText}" FontSize="11" Opacity="0.6"
+                       VerticalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="0"
+                        IsVisible="{Binding HasPages}">
+              <TextBlock Text="  │  Page " FontSize="11" Opacity="0.6"
+                         VerticalAlignment="Center" />
+              <TextBox x:Name="PageInput" Classes="page-input"
+                       Text="{Binding Viewport.CurrentPageInView, Mode=OneWay}"
+                       FontSize="11" MinWidth="32" MinHeight="0"
+                       Padding="2,0" Margin="0"
+                       BorderThickness="1" TextAlignment="Right"
+                       VerticalContentAlignment="Center"
+                       KeyDown="OnPageInputKeyDown"
+                       LostFocus="OnPageInputLostFocus"
+                       GotFocus="OnPageInputGotFocus" />
+              <TextBlock FontSize="11" Opacity="0.6" VerticalAlignment="Center">
+                <Run Text=" of " /><Run Text="{Binding Pages.Count}" />
+              </TextBlock>
+            </StackPanel>
+          </StackPanel>
         </DockPanel>
       </Border>
 

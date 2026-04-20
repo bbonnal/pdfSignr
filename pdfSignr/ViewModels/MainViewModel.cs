@@ -40,6 +40,7 @@ public partial class MainViewModel : ObservableObject
     public bool IsNotDraggingFile => !IsDraggingFile;
     public bool IsNotDragging => !IsDraggingFile && !IsDraggingPage;
     public bool HasNoPages => Pages.Count == 0;
+    public bool HasPages => Pages.Count > 0;
 
     partial void OnIsDraggingFileChanged(bool value)
     {
@@ -142,6 +143,7 @@ public partial class MainViewModel : ObservableObject
         CompressRasterizeCommand.NotifyCanExecuteChanged();
         SavePageRangeCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasNoPages));
+        OnPropertyChanged(nameof(HasPages));
         UpdateDocumentSize();
     }
 
@@ -186,9 +188,8 @@ public partial class MainViewModel : ObservableObject
             _ => ""
         };
         var sizeInfo = DocumentSizeText != null ? $"  \u2502  {DocumentSizeText}" : "";
-        var pagePos = Pages.Count > 0 ? $"  \u2502  Page {Viewport.CurrentPageInView} of {Pages.Count}" : "";
         var selInfo = SelectedPageCount > 1 ? $"  \u2502  {SelectedPageCount} pages selected" : "";
-        StatusText = $"{_baseStatus}{sizeInfo}{pagePos}{info}{selInfo}  \u2502  {Viewport.ZoomPercent}%";
+        StatusText = $"{_baseStatus}{sizeInfo}{info}{selInfo}  \u2502  {Viewport.ZoomPercent}%";
     }
 
     // CanSave depends on Pages.Count, not PdfFilePath — notifications are in OnPagesCollectionChanged

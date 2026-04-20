@@ -31,4 +31,22 @@ public class PdfRenderService : IPdfRenderService
         using var skBitmap = Conversion.ToImage(pdfBytes, page: pageIndex, password: password, options: new(Dpi: dpi, Rotation: rotation));
         return BitmapConvert.ToAvaloniaBitmap(skBitmap);
     }
+
+    /// <summary>
+    /// Renders multiple pages from the same document with a single pdfium open.
+    /// Amortizes the PDF parse cost across the batch — critical for large files.
+    /// </summary>
+    public IEnumerable<Avalonia.Media.Imaging.Bitmap> RenderPages(
+        byte[] pdfBytes, IReadOnlyList<int> pageIndices, int dpi,
+        int rotationDegrees = 0, string? password = null)
+    {
+        if (pageIndices.Count == 0) yield break;
+        var rotation = Models.PdfConstants.ToPdfRotation(rotationDegrees);
+        var options = new RenderOptions(Dpi: dpi, Rotation: rotation);
+        foreach (var skBitmap in Conversion.ToImages(pdfBytes, pageIndices, password, options))
+        {
+            try { yield return BitmapConvert.ToAvaloniaBitmap(skBitmap); }
+            finally { skBitmap.Dispose(); }
+        }
+    }
 }

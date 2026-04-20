@@ -53,28 +53,44 @@ public class PdfSaveService : IPdfSaveService
                         sourceDocCache[source.PdfBytes] = sourceDoc;
                     }
 
-                    var importedPage = outputDoc.AddPage(sourceDoc.Pages[source.SourcePageIndex]);
+                    var sourcePage = sourceDoc.Pages[source.SourcePageIndex];
+                    var importedPage = outputDoc.AddPage(sourcePage);
 
+                    // Total rotation the saved page will be viewed at = source's intrinsic /Rotate
+                    // plus the user's in-app rotation.
+                    int sourceRotation = ((sourcePage.Rotate % 360) + 360) % 360;
+                    int totalRotation = ((sourceRotation + rotationDegrees) % 360 + 360) % 360;
                     if (rotationDegrees != 0)
-                        importedPage.Rotate = (importedPage.Rotate + rotationDegrees) % 360;
+                        importedPage.Rotate = totalRotation;
 
                     var annList = annotations.ToList();
+
+                    _logger.LogInformation(
+                        "Save page {PageIdx}: sourceRotate={SrcRot}, userRotate={UserRot}, totalRotation={Total}, " +
+                        "underlying size={UW}x{UH}pt (from sourcePage), origW/H (from pdfium)={OrigW}x{OrigH}, annCount={N}",
+                        pageIdx, sourceRotation, rotationDegrees, totalRotation,
+                        sourcePage.Width.Point, sourcePage.Height.Point, origW, origH, annList.Count);
                     if (annList.Count > 0)
                     {
                         using var gfx = XGraphics.FromPdfPage(importedPage, XGraphicsPdfPageOptions.Append);
+
+                        // Annotations are stored in the user's visual (post-total-rotation) coord
+                        // system. XGraphics.FromPdfPage draws in the underlying (pre-rotation) page
+                        // space, so we apply a transform that makes drawing at visual (X, Y) land
+                        // correctly after the viewer applies /Rotate.
+                        double underlyingW = sourcePage.Width.Point;
+                        double underlyingH = sourcePage.Height.Point;
+                        ApplyVisualTransform(gfx, totalRotation, underlyingW, underlyingH);
+
                         foreach (var annotation in annList)
                         {
-                            var (drawX, drawY) = InverseTransformAnnotation(
-                                annotation.X, annotation.Y, annotation.WidthPt, annotation.HeightPt,
-                                rotationDegrees, origW, origH);
-
                             switch (annotation)
                             {
                                 case TextAnnotation text:
-                                    DrawText(gfx, text, drawX, drawY);
+                                    DrawText(gfx, text, annotation.X, annotation.Y);
                                     break;
                                 case SvgAnnotation svg:
-                                    DrawSvg(gfx, svg, drawX, drawY, fileCache, _svgRenderer);
+                                    DrawSvg(gfx, svg, annotation.X, annotation.Y, fileCache, _svgRenderer);
                                     break;
                             }
                         }
@@ -127,17 +143,26 @@ public class PdfSaveService : IPdfSaveService
         }
     }
 
-    private static (double x, double y) InverseTransformAnnotation(
-        double annX, double annY, double annW, double annH,
-        int rotationDegrees, double origW, double origH)
+    // Maps the XGraphics coord system from the underlying page space to the visual
+    // (post-/Rotate) space. After this, drawing at (vx, vy) in visual coords appears at
+    // (vx, vy) visually once the viewer applies the page's /Rotate.
+    private static void ApplyVisualTransform(XGraphics gfx, int totalRotation, double underlyingW, double underlyingH)
     {
-        return rotationDegrees switch
+        switch (totalRotation)
         {
-            90  => (annY, origH - annX - annH),
-            180 => (origW - annX - annW, origH - annY - annH),
-            270 => (origW - annY - annW, annX),
-            _   => (annX, annY)
-        };
+            case 90:
+                gfx.TranslateTransform(0, underlyingH);
+                gfx.RotateTransform(-90);
+                break;
+            case 180:
+                gfx.TranslateTransform(underlyingW, underlyingH);
+                gfx.RotateTransform(180);
+                break;
+            case 270:
+                gfx.TranslateTransform(underlyingW, 0);
+                gfx.RotateTransform(90);
+                break;
+        }
     }
 
     private static void WithRotation(XGraphics gfx, Annotation ann, double drawX, double drawY, Action draw)

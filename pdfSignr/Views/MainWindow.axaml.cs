@@ -209,9 +209,6 @@ public partial class MainWindow : Window, IViewportController
         _rerenderCts?.Cancel();
         _rerenderCts?.Dispose();
         _rerenderCts = null;
-        _backgroundLoadCts?.Cancel();
-        _backgroundLoadCts?.Dispose();
-        _backgroundLoadCts = null;
         _renderGate.Dispose();
         HideTextEditor();
         base.OnClosed(e);
@@ -354,5 +351,45 @@ public partial class MainWindow : Window, IViewportController
         var next = current == ThemeVariant.Dark ? ThemeVariant.Light : ThemeVariant.Dark;
         Application.Current.RequestedThemeVariant = next;
         _settingsService.Update(s => s with { ThemeVariant = next == ThemeVariant.Dark ? "Dark" : "Light" });
+    }
+
+    // ═══ Page number input ═══
+
+    private void OnPageInputGotFocus(object? sender, RoutedEventArgs e)
+    {
+        if (sender is TextBox tb)
+            tb.SelectAll();
+    }
+
+    private void OnPageInputKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (sender is not TextBox tb) return;
+
+        if (e.Key == Key.Enter)
+        {
+            CommitPageInput(tb);
+            Focus();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            tb.Text = ViewModel.Viewport.CurrentPageInView.ToString();
+            Focus();
+            e.Handled = true;
+        }
+    }
+
+    private void OnPageInputLostFocus(object? sender, RoutedEventArgs e)
+    {
+        if (sender is TextBox tb)
+            CommitPageInput(tb);
+    }
+
+    private void CommitPageInput(TextBox tb)
+    {
+        if (!TryNavigateToPage(tb.Text))
+        {
+            tb.Text = ViewModel.Viewport.CurrentPageInView.ToString();
+        }
     }
 }

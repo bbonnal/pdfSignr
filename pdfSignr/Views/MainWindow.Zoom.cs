@@ -20,10 +20,17 @@ public partial class MainWindow
     private DispatcherTimer? _rerenderTimer;
     private DispatcherTimer? _scrollTimer;
     private CancellationTokenSource? _rerenderCts;
-    private CancellationTokenSource? _backgroundLoadCts;
 
     // Bounds concurrent pdfium calls to leave headroom for the UI thread.
     private readonly SemaphoreSlim _renderGate = new(Math.Max(1, Environment.ProcessorCount / 2));
+
+    // Keep pages near the viewport rendered; evict beyond the retention ring so
+    // memory stays O(window), not O(document).
+    private const int PrefetchRingRadius = 3;
+    private const int RetentionRingRadius = 12;
+
+    // Cap bitmap pixel count to prevent OOM on extreme zoom (4 bytes/pixel → 256 MB max).
+    private const long MaxBitmapPixels = 64L * 1024 * 1024;
 
     // Page offset cache for O(log n) visibility lookup (list mode only).
     // Invalidated by structure/rotation/zoom/grid changes.
@@ -300,6 +307,17 @@ public partial class MainWindow
         return true;
     }
 
+    // Clamp DPI so a single rendered bitmap stays under MaxBitmapPixels.
+    // pixels = widthPt*heightPt * dpi² / 72² → dpi_max = sqrt(MaxPixels * 72² / area)
+    private static int ClampDpiForPage(int requestedDpi, double widthPt, double heightPt)
+    {
+        double area = widthPt * heightPt;
+        if (area <= 0) return requestedDpi;
+        double maxDpi = Math.Sqrt(MaxBitmapPixels * 72.0 * 72.0 / area);
+        int clamped = (int)Math.Min(requestedDpi, maxDpi);
+        return Math.Max(72, clamped);
+    }
+
     private async Task RerenderVisibleAsync()
     {
         _rerenderCts?.Cancel();
@@ -307,59 +325,101 @@ public partial class MainWindow
         var cts = new CancellationTokenSource();
         _rerenderCts = cts;
 
+        var pages = ViewModel.Pages;
+        int pageCount = pages.Count;
+        if (pageCount == 0) return;
+
         var visible = GetVisiblePageIndices();
         int dpi = _targetDpi;
-
-        // Capture render service on UI thread — ViewModel.RenderService accesses DataContext which is thread-affine
         var renderService = ViewModel.RenderService;
 
-        // Re-render pages that are visible AND not already at the target DPI
-        var pagesToRender = ViewModel.Pages
-            .Where(p => visible.Contains(p.Index)
-                     && (!_pageDpi.TryGetValue(p, out var cur) || cur != dpi))
-            .Select(p => (Page: p, p.Source.PdfBytes, p.Source.SourcePageIndex, p.RotationDegrees, p.Source.Password))
+        // Expand visible set into prefetch (render) and retention (keep-alive) rings.
+        int minVisible = visible.Count > 0 ? visible.Min() : 0;
+        int maxVisible = visible.Count > 0 ? visible.Max() : 0;
+        int prefetchMin = Math.Max(0, minVisible - PrefetchRingRadius);
+        int prefetchMax = Math.Min(pageCount - 1, maxVisible + PrefetchRingRadius);
+        int retentionMin = Math.Max(0, minVisible - RetentionRingRadius);
+        int retentionMax = Math.Min(pageCount - 1, maxVisible + RetentionRingRadius);
+
+        // Evict bitmaps outside the retention ring so memory stays bounded.
+        for (int i = 0; i < pageCount; i++)
+        {
+            if (i >= retentionMin && i <= retentionMax) continue;
+            var page = pages[i];
+            if (_pageDpi.TryRemove(page, out _))
+                page.ReplaceBitmap(null);
+        }
+
+        // Decide which pages need a render. Apply a per-page DPI cap so a
+        // single huge page at extreme zoom can't OOM.
+        var pagesToRender = new List<(PageItem Page, int EffectiveDpi)>();
+        for (int i = prefetchMin; i <= prefetchMax; i++)
+        {
+            var page = pages[i];
+            int effDpi = ClampDpiForPage(dpi, page.WidthPt, page.HeightPt);
+            if (!_pageDpi.TryGetValue(page, out var cur) || cur != effDpi)
+                pagesToRender.Add((page, effDpi));
+        }
+
+        // Group by (dpi, rotation) so each group can render with one pdfium open,
+        // amortizing the PDF parse cost across the batch (the big win on huge files).
+        var groups = pagesToRender
+            .GroupBy(t => (t.EffectiveDpi, t.Page.RotationDegrees))
             .ToList();
 
-        // Render in parallel — each page is independent.
-        // Concurrency is bounded by _renderGate to avoid overwhelming pdfium / CPU.
-        // Continuations run on the UI thread so bitmap swaps are safe.
-        var renderTasks = pagesToRender.Select(async item =>
+        foreach (var group in groups)
         {
-            var (page, pdfBytes, srcIdx, rotDeg, password) = item;
+            if (cts.Token.IsCancellationRequested) break;
+            var (effDpi, rotDeg) = group.Key;
+            var groupPages = group.Select(t => t.Page).ToList();
+            var groupIndices = groupPages.Select(p => p.Source.SourcePageIndex).ToList();
+            var pdfBytes = groupPages[0].Source.PdfBytes;
+            var password = groupPages[0].Source.Password;
+
             try
             {
                 await _renderGate.WaitAsync(cts.Token);
-                Avalonia.Media.Imaging.Bitmap bitmap;
-                try
-                {
-                    bitmap = await Task.Run(
-                        () => renderService.RenderPage(pdfBytes, srcIdx, dpi, rotDeg, password),
-                        cts.Token);
-                }
-                finally
-                {
-                    _renderGate.Release();
-                }
-
-                if (cts.Token.IsCancellationRequested)
-                {
-                    bitmap.Dispose();
-                    return;
-                }
-
-                page.ReplaceBitmap(bitmap);
-                _pageDpi[page] = dpi;
             }
-            catch (OperationCanceledException) { }
-        });
+            catch (OperationCanceledException) { return; }
 
-        try { await Task.WhenAll(renderTasks); }
-        catch (OperationCanceledException) { return; }
+            List<Avalonia.Media.Imaging.Bitmap>? bitmaps = null;
+            try
+            {
+                bitmaps = await Task.Run(() =>
+                {
+                    var list = new List<Avalonia.Media.Imaging.Bitmap>(groupIndices.Count);
+                    foreach (var bmp in renderService.RenderPages(pdfBytes, groupIndices, effDpi, rotDeg, password))
+                    {
+                        if (cts.Token.IsCancellationRequested) { bmp.Dispose(); break; }
+                        list.Add(bmp);
+                    }
+                    return list;
+                }, cts.Token);
+            }
+            catch (OperationCanceledException) { return; }
+            finally
+            {
+                _renderGate.Release();
+            }
+
+            if (cts.Token.IsCancellationRequested)
+            {
+                foreach (var b in bitmaps!) b.Dispose();
+                return;
+            }
+
+            for (int i = 0; i < bitmaps.Count && i < groupPages.Count; i++)
+            {
+                var page = groupPages[i];
+                page.ReplaceBitmap(bitmaps[i]);
+                _pageDpi[page] = effDpi;
+            }
+        }
 
         if (cts.Token.IsCancellationRequested) return;
 
         // Re-render annotation bitmaps on visible pages at the target DPI
-        var annotations = ViewModel.Pages
+        var annotations = pages
             .Where(p => visible.Contains(p.Index))
             .SelectMany(p => p.Annotations)
             .OfType<SvgAnnotation>()
@@ -396,73 +456,19 @@ public partial class MainWindow
 
     private void OnPdfLoaded()
     {
-        _backgroundLoadCts?.Cancel();
         _pageDpi.Clear();
         _targetDpi = PdfConstants.RenderDpi;
 
-        // Pages arrive with null bitmaps — render visible pages first, then the rest
         Dispatcher.UIThread.Post(async () =>
         {
             FitToWidth();
             UpdateCurrentPageIndicator();
-            await RerenderVisibleAsync();
-            try { await RenderRemainingPagesAsync(); }
-            catch (OperationCanceledException) { }
+            try { await RerenderVisibleAsync(); }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Background render failed: {ex}");
+                System.Diagnostics.Debug.WriteLine($"Initial render failed: {ex}");
             }
         }, DispatcherPriority.Background);
-    }
-
-    private async Task RenderRemainingPagesAsync()
-    {
-        _backgroundLoadCts?.Cancel();
-        _backgroundLoadCts?.Dispose();
-        var cts = new CancellationTokenSource();
-        _backgroundLoadCts = cts;
-
-        int dpi = _targetDpi;
-        var renderService = ViewModel.RenderService;
-        var unrendered = ViewModel.Pages
-            .Where(p => !_pageDpi.ContainsKey(p))
-            .ToList();
-
-        int dop = Math.Max(1, Environment.ProcessorCount / 2);
-        try
-        {
-            await Parallel.ForEachAsync(
-                unrendered,
-                new ParallelOptions { MaxDegreeOfParallelism = dop, CancellationToken = cts.Token },
-                async (page, innerCt) =>
-                {
-                    if (_pageDpi.ContainsKey(page)) return;
-                    await _renderGate.WaitAsync(innerCt);
-                    Avalonia.Media.Imaging.Bitmap bitmap;
-                    try
-                    {
-                        bitmap = await Task.Run(
-                            () => renderService.RenderPage(
-                                page.Source.PdfBytes, page.Source.SourcePageIndex, dpi, page.RotationDegrees, page.Source.Password),
-                            innerCt);
-                    }
-                    finally
-                    {
-                        _renderGate.Release();
-                    }
-
-                    if (innerCt.IsCancellationRequested) { bitmap.Dispose(); return; }
-
-                    // Bitmap swap must happen on the UI thread.
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        if (innerCt.IsCancellationRequested) { bitmap.Dispose(); return; }
-                        page.ReplaceBitmap(bitmap);
-                        _pageDpi[page] = dpi;
-                    });
-                });
-        }
-        catch (OperationCanceledException) { }
     }
 
     private void OnPageStructureChanged()
@@ -476,7 +482,7 @@ public partial class MainWindow
 
     private async void OnPageRotated(PageItem page)
     {
-        int dpi = _targetDpi;
+        int dpi = ClampDpiForPage(_targetDpi, page.WidthPt, page.HeightPt);
         var renderService = ViewModel.RenderService;
         _pageOffsetCacheValid = false;
         try
@@ -545,4 +551,30 @@ public partial class MainWindow
     private void OnFitToHeight(object? sender, RoutedEventArgs e) => FitToHeight();
     private void OnZoomIn(object? sender, RoutedEventArgs e) => ApplyZoom(NextZoomIn());
     private void OnZoomOut(object? sender, RoutedEventArgs e) => ApplyZoom(NextZoomOut());
+
+    // ═══ Page navigation ═══
+
+    internal void ScrollToPage(int pageIndexZeroBased)
+    {
+        int pageCount = ViewModel.Pages.Count;
+        if (pageCount == 0) return;
+        int idx = Math.Clamp(pageIndexZeroBased, 0, pageCount - 1);
+
+        ZoomTransform.UpdateLayout();
+        if (!TryRebuildPageOffsetCache(pageCount)) return;
+
+        PdfScrollViewer.Offset = new Vector(
+            PdfScrollViewer.Offset.X,
+            Math.Max(0, _pageTops[idx]));
+    }
+
+    internal bool TryNavigateToPage(string? text)
+    {
+        if (!int.TryParse(text?.Trim(), out int oneBased)) return false;
+        int pageCount = ViewModel.Pages.Count;
+        if (pageCount == 0) return false;
+        int idx = Math.Clamp(oneBased, 1, pageCount) - 1;
+        ScrollToPage(idx);
+        return true;
+    }
 }
