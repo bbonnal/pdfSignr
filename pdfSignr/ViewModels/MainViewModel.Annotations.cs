@@ -68,7 +68,7 @@ public partial class MainViewModel
                 X = Math.Clamp(pdfX - w / 2, 0, Math.Max(0, page.WidthPt - w)),
                 Y = Math.Clamp(pdfY - h / 2, 0, Math.Max(0, page.HeightPt - h)),
                 PageIndex = pageIndex,
-                Text = "Text", FontFamily = FontResolver.PdfFontNames[0],
+                Text = "Text", FontFamily = _fontCatalog.PdfFontNames[0],
                 HeightPt = h, WidthPt = w
             };
             UndoRedo.Execute(new AddAnnotationCommand(this, page, annotation));
@@ -82,11 +82,11 @@ public partial class MainViewModel
 
             if (isRaster)
             {
-                (baseW, baseH) = SvgRenderService.GetImageSize(SignatureSvgPath);
+                (baseW, baseH) = _svgRenderer.GetImageSize(SignatureSvgPath);
             }
             else
             {
-                (baseW, baseH) = SvgRenderService.GetSvgSize(SignatureSvgPath);
+                (baseW, baseH) = _svgRenderer.GetSvgSize(SignatureSvgPath);
             }
 
             double fitScale = 1.0;
@@ -100,8 +100,8 @@ public partial class MainViewModel
             double displayH = baseH * fitScale;
 
             Avalonia.Media.Imaging.Bitmap bitmap = isRaster
-                ? SvgRenderService.ResampleForDisplay(SignatureSvgPath, displayW, displayH, PdfConstants.RenderDpi)
-                : SvgRenderService.RenderForDisplay(SignatureSvgPath, fitScale, PdfConstants.RenderDpi);
+                ? _svgRenderer.ResampleForDisplay(SignatureSvgPath, displayW, displayH, PdfConstants.RenderDpi)
+                : _svgRenderer.RenderForDisplay(SignatureSvgPath, fitScale, PdfConstants.RenderDpi);
 
             var annotation = new SvgAnnotation
             {

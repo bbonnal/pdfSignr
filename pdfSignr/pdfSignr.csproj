@@ -14,6 +14,8 @@
     <Copyright>Copyright (c) 2026 pdfSignr Contributors</Copyright>
     <ApplicationIcon>Assets/signature_icon.ico</ApplicationIcon>
     <PublishReadyToRun>true</PublishReadyToRun>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
   </PropertyGroup>
 
   <ItemGroup>
@@ -34,6 +36,10 @@
     <!-- Pin transitive dep to fix GHSA-xrw6-gwf8-vvr9 (pulled by Avalonia.FreeDesktop) -->
     <PackageReference Include="Tmds.DBus.Protocol" Version="0.92.0" />
     <PackageReference Include="Iconr" Version="1.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="pdfSignr.Tests" />
   </ItemGroup>
 
   <ItemGroup>

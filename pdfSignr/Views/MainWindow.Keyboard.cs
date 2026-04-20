@@ -30,10 +30,10 @@ public partial class MainWindow
 
     // ═══ Helpers called by keybinding handlers (internal so service handlers can reach them) ═══
 
-    internal void ZoomInStep() => ApplyZoom(ZoomIn());
-    internal void ZoomOutStep() => ApplyZoom(ZoomOut());
+    public void ZoomIn() => ApplyZoom(NextZoomIn());
+    public void ZoomOut() => ApplyZoom(NextZoomOut());
 
-    internal ViewModels.PageItem? GetSelectedOrVisiblePage()
+    public ViewModels.PageItem? GetSelectedOrVisiblePage()
     {
         if (ViewModel.HasSelectedPages)
             return ViewModel.SelectedPages.First();
@@ -41,7 +41,7 @@ public partial class MainWindow
         return visible.Count > 0 ? ViewModel.Pages[visible.Min()] : null;
     }
 
-    internal void SelectCenterPage()
+    public void SelectCenterPage()
     {
         if (ViewModel.Pages.Count == 0) return;
         var center = new Point(
@@ -74,8 +74,35 @@ public partial class MainWindow
         }
     }
 
-    internal void ScrollByPages(int direction)
+    public void ScrollByPages(int direction)
     {
+        int pageCount = ViewModel.Pages.Count;
+        if (pageCount == 0) return;
+
+        // Snap to page boundaries so spacing between pages is included in the step.
+        if (!_pageOffsetCacheValid || _pageTops.Length != pageCount)
+            TryRebuildPageOffsetCache(pageCount);
+
+        if (_pageOffsetCacheValid)
+        {
+            double scrollY = PdfScrollViewer.Offset.Y;
+            // Current anchor = last page whose top is at or above the scroll position
+            int anchor = 0;
+            for (int i = 0; i < pageCount; i++)
+            {
+                if (_pageTops[i] <= scrollY + 0.5) anchor = i;
+                else break;
+            }
+
+            int target = Math.Clamp(anchor + direction, 0, pageCount - 1);
+            double targetY = target == 0 ? 0 : _pageTops[target];
+            PdfScrollViewer.Offset = new Vector(
+                PdfScrollViewer.Offset.X,
+                Math.Max(0, targetY));
+            return;
+        }
+
+        // Fallback if the cache couldn't be built (containers not yet realized)
         double step = PdfScrollViewer.Viewport.Height * 0.85;
         var offset = PdfScrollViewer.Offset;
         PdfScrollViewer.Offset = new Vector(
@@ -83,7 +110,7 @@ public partial class MainWindow
             Math.Max(0, offset.Y + direction * step));
     }
 
-    internal void SelectAdjacentPage(int direction, bool addToSelection)
+    public void SelectAdjacentPage(int direction, bool addToSelection)
     {
         if (ViewModel.Pages.Count == 0) return;
 

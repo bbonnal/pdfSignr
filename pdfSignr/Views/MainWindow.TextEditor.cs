@@ -54,7 +54,7 @@ public partial class MainWindow
         InlineTextBox.SelectAll();
     }
 
-    internal void HideTextEditor()
+    public void HideTextEditor()
     {
         if (_editingText != null)
         {

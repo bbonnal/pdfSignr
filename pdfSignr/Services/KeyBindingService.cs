@@ -1,6 +1,5 @@
 using Avalonia.Input;
 using pdfSignr.ViewModels;
-using pdfSignr.Views;
 
 namespace pdfSignr.Services;
 
@@ -12,7 +11,7 @@ public record KeyBinding(
     string DisplayText,
     string Description,
     string Category,
-    Action<MainViewModel, MainWindow> Handler);
+    Action<MainViewModel, IViewportController> Handler);
 
 public interface IKeyBindingService
 {
@@ -22,7 +21,7 @@ public interface IKeyBindingService
     IReadOnlyList<KeyBindingDisplay> DisplayRows { get; }
 
     /// <summary>Attempts to dispatch the chord. Returns true if a handler was invoked.</summary>
-    bool TryDispatch(KeyChord chord, MainViewModel vm, MainWindow window);
+    bool TryDispatch(KeyChord chord, MainViewModel vm, IViewportController viewport);
 }
 
 public record KeyBindingDisplay(string DisplayText, string Description, string Category);
@@ -43,10 +42,10 @@ public class KeyBindingService : IKeyBindingService
         _ = settings;
     }
 
-    public bool TryDispatch(KeyChord chord, MainViewModel vm, MainWindow window)
+    public bool TryDispatch(KeyChord chord, MainViewModel vm, IViewportController viewport)
     {
         if (!_byChord.TryGetValue(chord, out var binding)) return false;
-        binding.Handler(vm, window);
+        binding.Handler(vm, viewport);
         return true;
     }
 
@@ -55,7 +54,7 @@ public class KeyBindingService : IKeyBindingService
         var list = new List<KeyBinding>();
 
         void Add(string id, KeyChord chord, string display, string desc, string cat,
-            Action<MainViewModel, MainWindow> handler)
+            Action<MainViewModel, IViewportController> handler)
             => list.Add(new KeyBinding(id, chord, display, desc, cat, handler));
 
         // ═══ File ═══
@@ -80,13 +79,13 @@ public class KeyBindingService : IKeyBindingService
         Add("select-all", new(Key.A, KeyModifiers.Control), "Ctrl+A", "Select all pages", "Selection",
             (vm, _) => vm.SelectAllPages());
         Add("select-up", new(Key.Up, KeyModifiers.Control), "Ctrl+↑", "Add page above to selection", "Selection",
-            (_, w) => w.SelectAdjacentPage(-1, addToSelection: true));
+            (_, vp) => vp.SelectAdjacentPage(-1, addToSelection: true));
         Add("select-down", new(Key.Down, KeyModifiers.Control), "Ctrl+↓", "Add page below to selection", "Selection",
-            (_, w) => w.SelectAdjacentPage(1, addToSelection: true));
+            (_, vp) => vp.SelectAdjacentPage(1, addToSelection: true));
         Add("deselect", new(Key.Escape, KeyModifiers.None), "Esc", "Deselect all / cancel tool", "Selection",
-            (vm, w) =>
+            (vm, vp) =>
             {
-                w.HideTextEditor();
+                vp.HideTextEditor();
                 vm.CurrentTool = ToolMode.Select;
                 vm.SelectAnnotation(null);
                 if (vm.HasSelectedPages) vm.ClearPageSelection();
@@ -94,33 +93,33 @@ public class KeyBindingService : IKeyBindingService
 
         // ═══ Pages ═══
         Add("rotate-cw", new(Key.R, KeyModifiers.None), "R", "Rotate selected pages clockwise", "Pages",
-            (vm, w) =>
+            (vm, vp) =>
             {
-                var t = w.GetSelectedOrVisiblePage();
+                var t = vp.GetSelectedOrVisiblePage();
                 if (t != null) vm.RotatePageCwCommand.Execute(t);
             });
         Add("rotate-ccw", new(Key.R, KeyModifiers.Shift), "Shift+R", "Rotate selected pages counter-clockwise", "Pages",
-            (vm, w) =>
+            (vm, vp) =>
             {
-                var t = w.GetSelectedOrVisiblePage();
+                var t = vp.GetSelectedOrVisiblePage();
                 if (t != null) vm.RotatePageCcwCommand.Execute(t);
             });
         Add("move-up", new(Key.M, KeyModifiers.None), "M", "Move selected pages up/left", "Pages",
-            (vm, w) =>
+            (vm, vp) =>
             {
-                var t = w.GetSelectedOrVisiblePage();
+                var t = vp.GetSelectedOrVisiblePage();
                 if (t != null) vm.MovePageUpCommand.Execute(t);
             });
         Add("move-down", new(Key.M, KeyModifiers.Shift), "Shift+M", "Move selected pages down/right", "Pages",
-            (vm, w) =>
+            (vm, vp) =>
             {
-                var t = w.GetSelectedOrVisiblePage();
+                var t = vp.GetSelectedOrVisiblePage();
                 if (t != null) vm.MovePageDownCommand.Execute(t);
             });
         Add("delete", new(Key.Delete, KeyModifiers.None), "Del", "Delete annotation / selected pages", "Pages",
-            (vm, w) => DeleteSelected(vm, w));
+            (vm, vp) => DeleteSelected(vm, vp));
         Add("delete-back", new(Key.Back, KeyModifiers.None), "Backspace", "Delete annotation / selected pages", "Pages",
-            (vm, w) => DeleteSelected(vm, w));
+            (vm, vp) => DeleteSelected(vm, vp));
 
         // ═══ Tools ═══
         Add("tool-text", new(Key.A, KeyModifiers.None), "A", "Add text annotation", "Tools",
@@ -130,44 +129,48 @@ public class KeyBindingService : IKeyBindingService
 
         // ═══ Navigation ═══
         Add("scroll-up", new(Key.Up, KeyModifiers.None), "↑", "Scroll up one page", "Navigation",
-            (_, w) => w.ScrollByPages(-1));
+            (_, vp) => vp.ScrollByPages(-1));
         Add("scroll-down", new(Key.Down, KeyModifiers.None), "↓", "Scroll down one page", "Navigation",
-            (_, w) => w.ScrollByPages(1));
+            (_, vp) => vp.ScrollByPages(1));
         Add("select-center", new(Key.Enter, KeyModifiers.None), "Enter", "Select center page", "Navigation",
-            (_, w) => w.SelectCenterPage());
+            (_, vp) => vp.SelectCenterPage());
 
         // ═══ View ═══
         Add("fit-width-ctrl", new(Key.D0, KeyModifiers.Control), "Ctrl+0", "Fit to width", "View",
-            (_, w) => w.FitToWidth());
+            (_, vp) => vp.FitToWidth());
         Add("fit-width", new(Key.D0, KeyModifiers.None), "0", "Fit to width", "View",
-            (_, w) => w.FitToWidth());
+            (_, vp) => vp.FitToWidth());
+        Add("fit-height-ctrl", new(Key.D1, KeyModifiers.Control), "Ctrl+1", "Fit to height", "View",
+            (_, vp) => vp.FitToHeight());
+        Add("fit-height", new(Key.D1, KeyModifiers.None), "1", "Fit to height", "View",
+            (_, vp) => vp.FitToHeight());
         Add("zoom-in-ctrl-plus", new(Key.OemPlus, KeyModifiers.Control), "Ctrl++", "Zoom in", "View",
-            (_, w) => w.ZoomInStep());
+            (_, vp) => vp.ZoomIn());
         Add("zoom-in-ctrl-add", new(Key.Add, KeyModifiers.Control), "Ctrl++", "Zoom in", "View",
-            (_, w) => w.ZoomInStep());
+            (_, vp) => vp.ZoomIn());
         Add("zoom-in-plus", new(Key.OemPlus, KeyModifiers.None), "+", "Zoom in", "View",
-            (_, w) => w.ZoomInStep());
+            (_, vp) => vp.ZoomIn());
         Add("zoom-in-add", new(Key.Add, KeyModifiers.None), "+", "Zoom in", "View",
-            (_, w) => w.ZoomInStep());
+            (_, vp) => vp.ZoomIn());
         Add("zoom-out-ctrl-minus", new(Key.OemMinus, KeyModifiers.Control), "Ctrl+-", "Zoom out", "View",
-            (_, w) => w.ZoomOutStep());
+            (_, vp) => vp.ZoomOut());
         Add("zoom-out-ctrl-subtract", new(Key.Subtract, KeyModifiers.Control), "Ctrl+-", "Zoom out", "View",
-            (_, w) => w.ZoomOutStep());
+            (_, vp) => vp.ZoomOut());
         Add("zoom-out-minus", new(Key.OemMinus, KeyModifiers.None), "−", "Zoom out", "View",
-            (_, w) => w.ZoomOutStep());
+            (_, vp) => vp.ZoomOut());
         Add("zoom-out-subtract", new(Key.Subtract, KeyModifiers.None), "−", "Zoom out", "View",
-            (_, w) => w.ZoomOutStep());
+            (_, vp) => vp.ZoomOut());
         Add("toggle-grid", new(Key.G, KeyModifiers.None), "G", "Toggle grid/list mode", "View",
-            (vm, w) => { vm.IsGridMode = !vm.IsGridMode; w.ApplyGridMode(vm.IsGridMode); });
+            (vm, vp) => { vm.Viewport.IsGridMode = !vm.Viewport.IsGridMode; vp.ApplyGridMode(vm.Viewport.IsGridMode); });
 
         return list;
     }
 
-    private static void DeleteSelected(MainViewModel vm, MainWindow w)
+    private static void DeleteSelected(MainViewModel vm, IViewportController vp)
     {
         if (vm.DeleteCommand.CanExecute(null))
         {
-            w.HideTextEditor();
+            vp.HideTextEditor();
             vm.DeleteCommand.Execute(null);
         }
         else if (vm.HasSelectedPages)

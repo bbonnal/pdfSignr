@@ -301,7 +301,7 @@ public partial class MainWindow
             double midX = (topLeft.Value.X + bottomRight.Value.X) / 2;
             double midY = (topLeft.Value.Y + bottomRight.Value.Y) / 2;
 
-            if (ViewModel.IsGridMode)
+            if (ViewModel.Viewport.IsGridMode)
             {
                 double dist = (posInScrollViewer.X - midX) * (posInScrollViewer.X - midX)
                             + (posInScrollViewer.Y - midY) * (posInScrollViewer.Y - midY);

@@ -71,6 +71,7 @@ public class PdfCompressService : IPdfCompressService
         var result = await Task.Run(() =>
         {
             var sourceDocCache = new Dictionary<byte[], PdfDocument>(ReferenceEqualityComparer.Instance);
+            var sourceStreams = new List<MemoryStream>();
             var outputDoc = new PdfDocument();
             outputDoc.Options.CompressContentStreams = true;
 
@@ -81,9 +82,11 @@ public class PdfCompressService : IPdfCompressService
                     ct.ThrowIfCancellationRequested();
                     if (!sourceDocCache.TryGetValue(source.PdfBytes, out var sourceDoc))
                     {
+                        var ms = new MemoryStream(source.PdfBytes);
+                        sourceStreams.Add(ms);
                         sourceDoc = string.IsNullOrEmpty(source.Password)
-                            ? PdfReader.Open(new MemoryStream(source.PdfBytes), PdfDocumentOpenMode.Import)
-                            : PdfReader.Open(new MemoryStream(source.PdfBytes), source.Password, PdfDocumentOpenMode.Import);
+                            ? PdfReader.Open(ms, PdfDocumentOpenMode.Import)
+                            : PdfReader.Open(ms, source.Password, PdfDocumentOpenMode.Import);
                         sourceDocCache[source.PdfBytes] = sourceDoc;
                     }
                     var page = outputDoc.AddPage(sourceDoc.Pages[source.SourcePageIndex]);
@@ -106,7 +109,7 @@ public class PdfCompressService : IPdfCompressService
                         dict.Elements.GetName("/Subtype") == "/Image" &&
                         dict.Stream?.Value is { Length: > 0 } streamBytes)
                     {
-                        var resampled = TryResampleImage(dict, streamBytes, maxDim, jpegQuality);
+                        var resampled = TryResampleImage(dict, streamBytes, maxDim, jpegQuality, _logger);
                         if (resampled) imagesResampled++;
                     }
 
@@ -131,13 +134,15 @@ public class PdfCompressService : IPdfCompressService
                 outputDoc.Dispose();
                 foreach (var doc in sourceDocCache.Values)
                     doc.Dispose();
+                foreach (var s in sourceStreams)
+                    s.Dispose();
             }
         }, ct);
 
         return result;
     }
 
-    private static bool TryResampleImage(PdfDictionary dict, byte[] streamBytes, int maxDim, int jpegQuality)
+    private static bool TryResampleImage(PdfDictionary dict, byte[] streamBytes, int maxDim, int jpegQuality, ILogger logger)
     {
         int width = dict.Elements.GetInteger("/Width");
         int height = dict.Elements.GetInteger("/Height");
@@ -152,7 +157,7 @@ public class PdfCompressService : IPdfCompressService
         try
         {
             // Try to decode the image stream
-            byte[] imageBytes = GetDecodedImageBytes(dict, streamBytes, width, height);
+            byte[] imageBytes = GetDecodedImageBytes(dict, streamBytes, width, height, logger);
             if (imageBytes.Length == 0) return false;
 
             // Decode into SKBitmap
@@ -193,12 +198,12 @@ public class PdfCompressService : IPdfCompressService
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Image resample skipped: {ex.Message}");
+            logger.LogWarning(ex, "Image resample skipped");
             return false;
         }
     }
 
-    private static byte[] GetDecodedImageBytes(PdfDictionary dict, byte[] streamBytes, int width, int height)
+    private static byte[] GetDecodedImageBytes(PdfDictionary dict, byte[] streamBytes, int width, int height, ILogger logger)
     {
         // Check if this is already a JPEG (DCTDecode) — we can decode directly with SkiaSharp
         string filter = dict.Elements.GetName("/Filter");
@@ -223,7 +228,7 @@ public class PdfCompressService : IPdfCompressService
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Image decode fallback: {ex.Message}");
+                logger.LogDebug(ex, "Image decode fallback failed; using raw stream bytes");
             }
         }
 
@@ -299,39 +304,56 @@ public class PdfCompressService : IPdfCompressService
         var config = GetPreset(preset);
         int dpi = config.RasterDpi, jpegQuality = config.RasterQuality;
         long originalSize = ComputeOriginalSize(pageSources);
+        int pageCount = pageSources.Count;
 
-        var result = await Task.Run(() =>
+        // Phase 1: render + encode pages in parallel (CPU-bound, independent per page).
+        // Each pdfium call opens its own document instance, so concurrency is safe.
+        int dop = Math.Max(1, Environment.ProcessorCount / 2);
+        var jpegs = new byte[pageCount][];
+        var dims = new (double W, double H)[pageCount];
+        int done = 0;
+
+        await Parallel.ForEachAsync(
+            Enumerable.Range(0, pageCount),
+            new ParallelOptions { MaxDegreeOfParallelism = dop, CancellationToken = ct },
+            (i, innerCt) =>
+            {
+                var (source, rotDeg) = pageSources[i];
+                var (widthPt, heightPt) = _renderService.GetPageSize(source.PdfBytes, source.SourcePageIndex, source.Password);
+                var rotation = PdfConstants.ToPdfRotation(rotDeg);
+                dims[i] = (
+                    rotDeg is 90 or 270 ? heightPt : widthPt,
+                    rotDeg is 90 or 270 ? widthPt : heightPt);
+
+                using var skBitmap = Conversion.ToImage(
+                    source.PdfBytes, page: source.SourcePageIndex, password: source.Password,
+                    options: new(Dpi: dpi, Rotation: rotation));
+                using var jpegData = skBitmap.Encode(SKEncodedImageFormat.Jpeg, jpegQuality);
+                jpegs[i] = jpegData.ToArray();
+
+                int d = Interlocked.Increment(ref done);
+                progress?.Report(d * 100 / pageCount);
+                return ValueTask.CompletedTask;
+            });
+
+        // Phase 2: assemble PdfDocument sequentially (PdfSharp's PdfDocument is not thread-safe).
+        return await Task.Run(() =>
         {
             using var doc = new PdfDocument();
             doc.Options.CompressContentStreams = true;
 
-            for (int i = 0; i < pageSources.Count; i++)
+            for (int i = 0; i < pageCount; i++)
             {
                 ct.ThrowIfCancellationRequested();
-
-                var (source, rotDeg) = pageSources[i];
-                var (widthPt, heightPt) = _renderService.GetPageSize(source.PdfBytes, source.SourcePageIndex, source.Password);
-
-                // Apply rotation to dimensions and rendering
-                var rotation = PdfConstants.ToPdfRotation(rotDeg);
-                double effectiveW = rotDeg is 90 or 270 ? heightPt : widthPt;
-                double effectiveH = rotDeg is 90 or 270 ? widthPt : heightPt;
-
-                using var skBitmap = Conversion.ToImage(
-                    source.PdfBytes, page: source.SourcePageIndex, password: source.Password, options: new(Dpi: dpi, Rotation: rotation));
-                using var jpegData = skBitmap.Encode(SKEncodedImageFormat.Jpeg, jpegQuality);
-                var jpegBytes = jpegData.ToArray();
-
+                var (w, h) = dims[i];
                 var page = doc.AddPage();
-                page.Width = XUnitPt.FromPoint(effectiveW);
-                page.Height = XUnitPt.FromPoint(effectiveH);
+                page.Width = XUnitPt.FromPoint(w);
+                page.Height = XUnitPt.FromPoint(h);
 
-                using var imgStream = new MemoryStream(jpegBytes);
+                using var imgStream = new MemoryStream(jpegs[i]);
                 using var xImage = XImage.FromStream(imgStream);
                 using var gfx = XGraphics.FromPdfPage(page);
-                gfx.DrawImage(xImage, 0, 0, effectiveW, effectiveH);
-
-                progress?.Report((i + 1) * 100 / pageSources.Count);
+                gfx.DrawImage(xImage, 0, 0, w, h);
             }
 
             if (!string.IsNullOrEmpty(outputPassword))
@@ -341,11 +363,8 @@ public class PdfCompressService : IPdfCompressService
             }
 
             doc.Save(outputPath);
-
             var compressedSize = new FileInfo(outputPath).Length;
-            return new CompressResult(originalSize, compressedSize, pageSources.Count, 0);
+            return new CompressResult(originalSize, compressedSize, pageCount, 0);
         }, ct);
-
-        return result;
     }
 }

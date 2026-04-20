@@ -1,10 +1,8 @@
 using Avalonia;
-using Avalonia.Dialogs;
-using pdfSignr.Views;
 
 namespace pdfSignr;
 
-class Program
+internal class Program
 {
     [STAThread]
     public static void Main(string[] args)
@@ -15,8 +13,7 @@ class Program
     public static AppBuilder BuildAvaloniaApp()
     {
         var builder = AppBuilder.Configure<App>()
-            .UsePlatformDetect()
-            .UseManagedSystemDialogs<FileDialogWindow>();
+            .UsePlatformDetect();
 #if DEBUG
         builder = builder.WithDeveloperTools().LogToTrace();
 #endif

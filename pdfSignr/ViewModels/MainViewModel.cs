@@ -17,6 +17,9 @@ public partial class MainViewModel : ObservableObject
     private readonly IPdfRenderService _renderService;
     private readonly IPdfSaveService _saveService;
     private readonly IPdfCompressService _compressService;
+    private readonly IFontCatalog _fontCatalog;
+    private readonly ISvgRenderService _svgRenderer;
+    private readonly IDialogService _dialogs;
 
     [ObservableProperty] private string? _pdfFilePath;
     [ObservableProperty] private ObservableCollection<PageItem> _pages = new();
@@ -31,16 +34,12 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _statusText = DefaultStatus;
     [ObservableProperty] private string? _signatureSvgPath;
     [ObservableProperty] private bool _isDraggingFile;
-    [ObservableProperty] private double _buttonScale = 1.0;
-    [ObservableProperty] private bool _isGridMode;
     [ObservableProperty] private bool _isDraggingPage;
-    [ObservableProperty] private Thickness _selectionBorderThickness = new(3);
     [ObservableProperty] private bool _lockOnSave;
 
     public bool IsNotDraggingFile => !IsDraggingFile;
     public bool IsNotDragging => !IsDraggingFile && !IsDraggingPage;
     public bool HasNoPages => Pages.Count == 0;
-    public bool IsNotGridMode => !IsGridMode;
 
     partial void OnIsDraggingFileChanged(bool value)
     {
@@ -53,20 +52,15 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsNotDragging));
     }
 
-    partial void OnIsGridModeChanged(bool value)
-    {
-        OnPropertyChanged(nameof(IsNotGridMode));
-    }
-
     /// <summary>
     /// Prompts for an output password if LockOnSave is enabled.
     /// Returns null password if locking is off, or cancelled=true if the user dismissed the prompt.
     /// </summary>
     private async Task<(bool Cancelled, string? Password)> GetOutputPasswordAsync()
     {
-        if (!LockOnSave || ShowPasswordOverlay == null) return (false, null);
+        if (!LockOnSave) return (false, null);
 
-        var pw = await ShowPasswordOverlay("Set Password", "Enter a password to lock the saved PDF.", false);
+        var pw = await _dialogs.ShowPasswordAsync("Set Password", "Enter a password to lock the saved PDF.", false);
         if (pw == null) return (true, null);
         return (false, pw);
     }
@@ -89,11 +83,11 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    public static string[] AvailableFonts => FontResolver.PdfFontNames;
+    public IReadOnlyList<string> AvailableFonts => _fontCatalog.PdfFontNames;
+    public ISvgRenderService SvgRenderer => _svgRenderer;
+    public IFontCatalog FontCatalog => _fontCatalog;
 
-    // Set by MainWindow when zoom/scroll changes
-    public int ZoomPercent { get; set; } = 100;
-    public int CurrentPageInView { get; set; } = 1;
+    public ViewportViewModel Viewport { get; }
     private string? DocumentSizeText { get; set; }
 
     // Computed tool-active properties for Ribbon ToggleButton binding
@@ -105,22 +99,24 @@ public partial class MainViewModel : ObservableObject
     public event Action? PdfLoaded;
     public event Action<PageItem>? PageRotated;
 
-    /// <summary>Set by the View to show a password overlay. Args: title, message, showError. Returns password or null.</summary>
-    public Func<string, string, bool, Task<string?>>? ShowPasswordOverlay { get; set; }
-
     public UndoRedoService UndoRedo { get; }
 
     public IPdfRenderService RenderService => _renderService;
 
     public MainViewModel(IFileDialogService fileDialogs, IPdfRenderService renderService,
         IPdfSaveService saveService, IPdfCompressService compressService,
-        ISettingsService settings)
+        IFontCatalog fontCatalog, ISvgRenderService svgRenderer,
+        IDialogService dialogs, ViewportViewModel viewport, UndoRedoService undoRedo)
     {
         _fileDialogs = fileDialogs;
         _renderService = renderService;
         _saveService = saveService;
         _compressService = compressService;
-        UndoRedo = new UndoRedoService(settings);
+        _fontCatalog = fontCatalog;
+        _svgRenderer = svgRenderer;
+        _dialogs = dialogs;
+        Viewport = viewport;
+        UndoRedo = undoRedo;
         Pages.CollectionChanged += OnPagesCollectionChanged;
         UndoRedo.PropertyChanged += (_, _) =>
         {
@@ -190,9 +186,9 @@ public partial class MainViewModel : ObservableObject
             _ => ""
         };
         var sizeInfo = DocumentSizeText != null ? $"  \u2502  {DocumentSizeText}" : "";
-        var pagePos = Pages.Count > 0 ? $"  \u2502  Page {CurrentPageInView} of {Pages.Count}" : "";
+        var pagePos = Pages.Count > 0 ? $"  \u2502  Page {Viewport.CurrentPageInView} of {Pages.Count}" : "";
         var selInfo = SelectedPageCount > 1 ? $"  \u2502  {SelectedPageCount} pages selected" : "";
-        StatusText = $"{_baseStatus}{sizeInfo}{pagePos}{info}{selInfo}  \u2502  {ZoomPercent}%";
+        StatusText = $"{_baseStatus}{sizeInfo}{pagePos}{info}{selInfo}  \u2502  {Viewport.ZoomPercent}%";
     }
 
     // CanSave depends on Pages.Count, not PdfFilePath — notifications are in OnPagesCollectionChanged

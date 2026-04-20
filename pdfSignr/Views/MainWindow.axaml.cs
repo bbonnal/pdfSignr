@@ -14,7 +14,7 @@ using pdfSignr.ViewModels;
 
 namespace pdfSignr.Views;
 
-public partial class MainWindow : Window
+public partial class MainWindow : Window, IViewportController
 {
     private const double FitToWidthPadding = 40;
     private const double ScrollIntoViewMargin = 20;
@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     private const double BorderHitZone = 40;
 
     private readonly IKeyBindingService _keyBindingService;
+    private readonly ISettingsService _settingsService;
     private readonly AppSettings _settings;
 
     private double ZoomFactor => _settings.ZoomFactor;
@@ -31,10 +32,19 @@ public partial class MainWindow : Window
 
     private MainViewModel ViewModel => (MainViewModel)DataContext!;
 
+    // Parameterless constructor used by the Avalonia XAML designer only.
+    // At runtime the DI-registered constructor below is resolved.
     public MainWindow()
+        : this(App.Services.GetRequiredService<IKeyBindingService>(),
+               App.Services.GetRequiredService<ISettingsService>())
     {
-        _keyBindingService = App.Services.GetRequiredService<IKeyBindingService>();
-        _settings = App.Services.GetRequiredService<ISettingsService>().Current;
+    }
+
+    public MainWindow(IKeyBindingService keyBindingService, ISettingsService settingsService)
+    {
+        _keyBindingService = keyBindingService;
+        _settingsService = settingsService;
+        _settings = settingsService.Current;
 
         InitializeComponent();
 
@@ -57,7 +67,8 @@ public partial class MainWindow : Window
         AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
         AddHandler(DragDrop.DropEvent, OnDrop);
 
-        PopulateKeyBindingsFlyout();
+        // Flyout population is deferred to OnLoaded; it requires the theme resources
+        // to be resolvable via the visual tree, which isn't true at ctor time.
     }
 
     private void PopulateKeyBindingsFlyout()
@@ -81,10 +92,12 @@ public partial class MainWindow : Window
             }
 
             var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+            IBrush keyBadgeBrush = Brushes.Transparent;
+            if (TryGetResource("KeyBadgeBrush", Application.Current?.ActualThemeVariant, out var res) && res is IBrush b)
+                keyBadgeBrush = b;
             var keyBorder = new Border
             {
-                Background = Brushes.Gray,
-                Opacity = 0.15,
+                Background = keyBadgeBrush,
                 CornerRadius = new CornerRadius(3),
                 Padding = new Thickness(6, 1),
                 Margin = new Thickness(0, 0, 10, 0),
@@ -145,18 +158,46 @@ public partial class MainWindow : Window
         ViewModel.PdfLoaded += OnPdfLoaded;
         ViewModel.PageStructureChanged += OnPageStructureChanged;
         ViewModel.PageRotated += OnPageRotated;
-        ViewModel.ShowPasswordOverlay = (title, msg, err) =>
-            Dialog.ShowPasswordAsync(title, msg, err ? "Incorrect password. Please try again." : null)
-                  .ContinueWith(t => t.Result.Confirmed ? t.Result.Text : null,
-                      TaskScheduler.FromCurrentSynchronizationContext());
+
+        // Apply persisted theme variant, then populate the flyout (needs themed resources).
+        ApplyThemeFromSettings();
+        PopulateKeyBindingsFlyout();
+        Application.Current!.ActualThemeVariantChanged += OnThemeChanged;
 
         // Warm up the StorageProvider so the first file-open dialog is fast.
         // On Linux/WSL this forces the D-Bus portal connection to initialize in the background.
         _ = StorageProvider.TryGetWellKnownFolderAsync(WellKnownFolder.Documents);
     }
 
+    private void ApplyThemeFromSettings()
+    {
+        var variant = _settings.ThemeVariant switch
+        {
+            "Light" => ThemeVariant.Light,
+            "Dark" => ThemeVariant.Dark,
+            _ => ThemeVariant.Default
+        };
+        Application.Current!.RequestedThemeVariant = variant;
+        UpdateThemeIcon();
+    }
+
+    private void UpdateThemeIcon()
+    {
+        var isDark = Application.Current!.ActualThemeVariant == ThemeVariant.Dark;
+        ThemeIcon.Data = IconService.CreateGeometry(isDark ? Iconr.Icon.sun : Iconr.Icon.moon);
+    }
+
+    private void OnThemeChanged(object? sender, EventArgs e)
+    {
+        UpdateThemeIcon();
+        KeyBindingsFlyout.Children.Clear();
+        PopulateKeyBindingsFlyout();
+    }
+
     protected override void OnClosed(EventArgs e)
     {
+        if (Application.Current != null)
+            Application.Current.ActualThemeVariantChanged -= OnThemeChanged;
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         ViewModel.PdfLoaded -= OnPdfLoaded;
         ViewModel.PageStructureChanged -= OnPageStructureChanged;
@@ -171,6 +212,7 @@ public partial class MainWindow : Window
         _backgroundLoadCts?.Cancel();
         _backgroundLoadCts?.Dispose();
         _backgroundLoadCts = null;
+        _renderGate.Dispose();
         HideTextEditor();
         base.OnClosed(e);
     }
@@ -306,13 +348,11 @@ public partial class MainWindow : Window
 
     // ═══ Theme toggle ═══
 
-    private bool _isDark = true; // dark by default
-
     private void OnThemeToggle(object? sender, RoutedEventArgs e)
     {
-        _isDark = !_isDark;
-        Application.Current!.RequestedThemeVariant = _isDark ? ThemeVariant.Dark : ThemeVariant.Light;
-
-        ThemeIcon.Data = IconService.CreateGeometry(_isDark ? Iconr.Icon.sun : Iconr.Icon.moon);
+        var current = Application.Current!.ActualThemeVariant;
+        var next = current == ThemeVariant.Dark ? ThemeVariant.Light : ThemeVariant.Dark;
+        Application.Current.RequestedThemeVariant = next;
+        _settingsService.Update(s => s with { ThemeVariant = next == ThemeVariant.Dark ? "Dark" : "Light" });
     }
 }

@@ -8,6 +8,7 @@ public record AppSettings
     public double MinZoom { get; init; } = 0.1;
     public double MaxZoom { get; init; } = 5.0;
     public bool GridModeDefault { get; init; } = false;
+    public string ThemeVariant { get; init; } = "Dark";
     public CompressionPresetDpi CompressDpi { get; init; } = new();
     public Dictionary<string, string> KeyBindingOverrides { get; init; } = new();
 }

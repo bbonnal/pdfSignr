@@ -24,15 +24,18 @@ public partial class App : Application
 
         AvaloniaXamlLoader.Load(this);
 
-        if (GlobalFontSettings.FontResolver == null)
-            GlobalFontSettings.FontResolver = new FontResolver();
+        // Bootstrap Model-layer statics: Annotations cannot hold injected services. Set once at startup.
+        Models.TextAnnotation.Catalog = Services.GetRequiredService<IFontCatalog>();
+        Models.SvgAnnotation.Renderer = Services.GetRequiredService<ISvgRenderService>();
+
+        GlobalFontSettings.FontResolver ??= Services.GetRequiredService<FontResolver>();
     }
 
     public override void OnFrameworkInitializationCompleted()
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var window = new MainWindow();
+            var window = Services.GetRequiredService<MainWindow>();
             var dialogOverlay = window.FindControl<DialogOverlay>("Dialog")!;
 
             var windows = Services.GetRequiredService<IWindowAccessor>();
@@ -65,9 +68,18 @@ public partial class App : Application
         services.AddSingleton<IPdfSaveService, PdfSaveService>();
         services.AddSingleton<IPdfCompressService, PdfCompressService>();
         services.AddSingleton<IKeyBindingService, KeyBindingService>();
+        services.AddSingleton<ISvgRenderService, SvgRenderService>();
+        services.AddSingleton<IFontCatalog, FontCatalog>();
+        services.AddSingleton<FontResolver>();
+        services.AddSingleton<IDialogService, DialogService>();
 
         // ViewModels
+        services.AddSingleton<ViewportViewModel>();
         services.AddSingleton<MainViewModel>();
+        services.AddTransient<UndoRedoService>();
+
+        // Views
+        services.AddSingleton<MainWindow>();
 
         return services.BuildServiceProvider();
     }

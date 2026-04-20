@@ -77,12 +77,7 @@ public partial class MainViewModel
                     BaseStatus = "Too many failed password attempts";
                     return null;
                 }
-                if (ShowPasswordOverlay == null)
-                {
-                    BaseStatus = "Password-protected PDF";
-                    return null;
-                }
-                var pw = await ShowPasswordOverlay(
+                var pw = await _dialogs.ShowPasswordAsync(
                     "Unlock PDF",
                     $"\"{fileName}\" is password-protected.",
                     showError);
@@ -173,9 +168,10 @@ public partial class MainViewModel
             .Select(p => (p.Source, p.RotationDegrees, p.OriginalWidthPt, p.OriginalHeightPt,
                           (IEnumerable<Annotation>)p.Annotations));
 
+        var progress = new Progress<int>(p => BaseStatus = $"Saving\u2026 {p}%");
         try
         {
-            _saveService.Save(outputPath, pagesWithAnnotations, outPw);
+            await _saveService.SaveAsync(outputPath, pagesWithAnnotations, outPw, progress);
             BaseStatus = formatSuccess(Path.GetFileName(outputPath));
         }
         catch (Exception ex)
@@ -207,12 +203,13 @@ public partial class MainViewModel
             $"Save pages {from}\u2013{to}", baseName + suffix, ".pdf", ["*.pdf"]);
         if (outputPath == null) return;
 
+        var progress = new Progress<int>(p => BaseStatus = $"Saving\u2026 {p}%");
         try
         {
             var pagesInRange = Pages.Skip(from - 1).Take(to - from + 1)
                 .Select(p => (p.Source, p.RotationDegrees, p.OriginalWidthPt, p.OriginalHeightPt,
                               (IEnumerable<Annotation>)p.Annotations));
-            _saveService.Save(outputPath, pagesInRange, outPw);
+            await _saveService.SaveAsync(outputPath, pagesInRange, outPw, progress);
             BaseStatus = from == to
                 ? $"Page {from} saved to {Path.GetFileName(outputPath)}"
                 : $"Pages {from}\u2013{to} saved to {Path.GetFileName(outputPath)}";

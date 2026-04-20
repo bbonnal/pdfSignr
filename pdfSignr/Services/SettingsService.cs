@@ -45,25 +45,31 @@ public class SettingsService : ISettingsService
         }
     }
 
-    public async Task SaveAsync()
+    public Task SaveAsync()
     {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            var json = JsonSerializer.Serialize(_current, JsonOptions);
-            await File.WriteAllTextAsync(_path, json);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to save settings to {Path}", _path);
-        }
+        SaveSync();
+        return Task.CompletedTask;
     }
 
     public void Update(Func<AppSettings, AppSettings> mutate)
     {
         _current = mutate(_current);
         Changed?.Invoke(_current);
-        _ = SaveAsync();
+        SaveSync();
+    }
+
+    private void SaveSync()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+            var json = JsonSerializer.Serialize(_current, JsonOptions);
+            File.WriteAllText(_path, json);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to save settings to {Path}", _path);
+        }
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

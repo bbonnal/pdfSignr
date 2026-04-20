@@ -10,43 +10,15 @@ namespace pdfSignr.Services;
 /// </summary>
 public class FontResolver : IFontResolver
 {
-    /// <summary>PDF font names available for annotations.</summary>
-    public static readonly string[] PdfFontNames = ["Helvetica", "Times-Roman", "Courier"];
+    private readonly IFontCatalog _catalog;
 
-    /// <summary>Maps a PDF font name to a Liberation face name for PDFsharp resolution.</summary>
-    public static string MapToFaceName(string pdfFont) => pdfFont switch
+    public FontResolver(IFontCatalog catalog)
     {
-        "Helvetica" => "LiberationSans",
-        "Times-Roman" or "Times" => "LiberationSerif",
-        "Courier" => "LiberationMono",
-        _ => "LiberationSans"
-    };
-
-    private static readonly Dictionary<string, string> AvaloniaFontUris = new()
-    {
-        ["Helvetica"] = "avares://pdfSignr/Assets/Fonts/LiberationSans-Regular.ttf#Liberation Sans",
-        ["Times-Roman"] = "avares://pdfSignr/Assets/Fonts/LiberationSerif-Regular.ttf#Liberation Serif",
-        ["Courier"] = "avares://pdfSignr/Assets/Fonts/LiberationMono-Regular.ttf#Liberation Mono",
-    };
-
-    /// <summary>Returns the Avalonia font URI for a PDF font name.</summary>
-    public static string GetAvaloniaFontUri(string pdfFont)
-        => AvaloniaFontUris.GetValueOrDefault(pdfFont, AvaloniaFontUris["Helvetica"]);
-
-    private static readonly Assembly ThisAssembly = Assembly.GetExecutingAssembly();
-    private static readonly ConcurrentDictionary<string, byte[]> FontCache = new();
-
-    private static readonly Dictionary<string, string> FontResourceMap = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["LiberationSans"] = "pdfSignr.Assets.Fonts.LiberationSans-Regular.ttf",
-        ["LiberationSerif"] = "pdfSignr.Assets.Fonts.LiberationSerif-Regular.ttf",
-        ["LiberationMono"] = "pdfSignr.Assets.Fonts.LiberationMono-Regular.ttf",
-    };
+        _catalog = catalog;
+    }
 
     public FontResolverInfo? ResolveTypeface(string familyName, bool isBold, bool isItalic)
-    {
-        return new FontResolverInfo(MapToFaceName(familyName));
-    }
+        => new(_catalog.MapToFaceName(familyName));
 
     public byte[]? GetFont(string faceName)
     {
@@ -64,4 +36,14 @@ public class FontResolver : IFontResolver
         var data = ms.ToArray();
         return FontCache.GetOrAdd(faceName, data);
     }
+
+    private static readonly Assembly ThisAssembly = Assembly.GetExecutingAssembly();
+    private static readonly ConcurrentDictionary<string, byte[]> FontCache = new();
+
+    private static readonly Dictionary<string, string> FontResourceMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["LiberationSans"] = "pdfSignr.Assets.Fonts.LiberationSans-Regular.ttf",
+        ["LiberationSerif"] = "pdfSignr.Assets.Fonts.LiberationSerif-Regular.ttf",
+        ["LiberationMono"] = "pdfSignr.Assets.Fonts.LiberationMono-Regular.ttf",
+    };
 }

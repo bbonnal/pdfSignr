@@ -22,17 +22,26 @@ public partial class MainWindow
     private CancellationTokenSource? _rerenderCts;
     private CancellationTokenSource? _backgroundLoadCts;
 
+    // Bounds concurrent pdfium calls to leave headroom for the UI thread.
+    private readonly SemaphoreSlim _renderGate = new(Math.Max(1, Environment.ProcessorCount / 2));
+
+    // Page offset cache for O(log n) visibility lookup (list mode only).
+    // Invalidated by structure/rotation/zoom/grid changes.
+    private double[] _pageTops = [];
+    private double[] _pageHeights = [];
+    private bool _pageOffsetCacheValid;
+
     // Fixed arrow column width in layout units (scales with zoom like the page)
     private const double ArrowColumnLayoutWidth = 34;
 
-    private double ZoomIn() => System.Math.Clamp(_zoom * ZoomFactor, MinZoom, MaxZoom);
-    private double ZoomOut() => System.Math.Clamp(_zoom / ZoomFactor, MinZoom, MaxZoom);
+    private double NextZoomIn() => System.Math.Clamp(_zoom * ZoomFactor, MinZoom, MaxZoom);
+    private double NextZoomOut() => System.Math.Clamp(_zoom / ZoomFactor, MinZoom, MaxZoom);
 
     private void OnScrollWheel(object? sender, PointerWheelEventArgs e)
     {
         if (!e.KeyModifiers.HasFlag(KeyModifiers.Control)) return;
 
-        double newZoom = e.Delta.Y > 0 ? ZoomIn() : ZoomOut();
+        double newZoom = e.Delta.Y > 0 ? NextZoomIn() : NextZoomOut();
         ApplyZoom(newZoom, e.GetPosition(PdfScrollViewer));
         e.Handled = true;
     }
@@ -54,9 +63,12 @@ public partial class MainWindow
         }
 
         ZoomTransform.LayoutTransform = new Avalonia.Media.ScaleTransform(_zoom, _zoom);
-        ViewModel.ButtonScale = 1.0 / _zoom;
-        ViewModel.SelectionBorderThickness = new Thickness(3.0 / _zoom);
-        ViewModel.ZoomPercent = (int)System.Math.Round(_zoom * 100);
+        _pageOffsetCacheValid = false;
+        ViewModel.Viewport.ButtonScale = 1.0 / _zoom;
+        ViewModel.Viewport.SelectionBorderThickness = new Thickness(3.0 / _zoom);
+        ViewModel.Viewport.HitBorderThickness = new Thickness(28.0 / _zoom);
+        ViewModel.Viewport.HitBorderMargin = new Thickness(-28.0 / _zoom);
+        ViewModel.Viewport.ZoomPercent = (int)System.Math.Round(_zoom * 100);
         ViewModel.UpdateStatusText();
 
         // Adjust scroll so content point stays under anchor
@@ -98,6 +110,37 @@ public partial class MainWindow
         ApplyZoom(System.Math.Clamp(available / totalLayoutWidth, MinZoom, MaxZoom), viewportCenter);
     }
 
+    public void FitToHeight()
+    {
+        if (ViewModel.Pages.Count == 0) return;
+
+        double available = PdfScrollViewer.Bounds.Height - FitToWidthPadding;
+        if (available <= 0) return;
+
+        // Fit the tallest page to the viewport height
+        double pageScreenHeight = ViewModel.Pages.Max(p => p.HeightPt) * PdfConstants.DpiScale;
+        if (pageScreenHeight <= 0) return;
+
+        // Remember which page we're on so we can snap its top to the viewport after zoom
+        var visible = GetVisiblePageIndices();
+        int anchorIndex = visible.Count > 0 ? visible.Min() : 0;
+
+        var viewportCenter = new Point(
+            PdfScrollViewer.Viewport.Width / 2,
+            PdfScrollViewer.Viewport.Height / 2);
+        ApplyZoom(System.Math.Clamp(available / pageScreenHeight, MinZoom, MaxZoom), viewportCenter);
+
+        // Snap to the anchor page's top so a full page is visible
+        ZoomTransform.UpdateLayout();
+        if (TryRebuildPageOffsetCache(ViewModel.Pages.Count)
+            && anchorIndex >= 0 && anchorIndex < _pageTops.Length)
+        {
+            PdfScrollViewer.Offset = new Vector(
+                PdfScrollViewer.Offset.X,
+                Math.Max(0, _pageTops[anchorIndex]));
+        }
+    }
+
     // ═══ Adaptive DPI re-render ═══
 
     private void ScheduleRerender()
@@ -125,7 +168,7 @@ public partial class MainWindow
         var visible = GetVisiblePageIndices();
         if (visible.Count > 0)
         {
-            ViewModel.CurrentPageInView = visible.Min() + 1;
+            ViewModel.Viewport.CurrentPageInView = visible.Min() + 1;
             ViewModel.UpdateStatusText();
         }
     }
@@ -162,10 +205,50 @@ public partial class MainWindow
     internal HashSet<int> GetVisiblePageIndices()
     {
         var visible = new HashSet<int>();
-        if (ViewModel.Pages.Count == 0) return visible;
+        int pageCount = ViewModel.Pages.Count;
+        if (pageCount == 0) return visible;
 
-        var itemsControl = (ItemsControl)ZoomTransform.Child!;
         double viewportH = PdfScrollViewer.Viewport.Height;
+
+        // Grid mode has 2D layout: binary search on vertical tops doesn't capture all
+        // visible items in a row. Fall back to container walk.
+        if (ViewModel.Viewport.IsGridMode)
+            return GetVisiblePageIndicesByContainers(viewportH);
+
+        // List mode: build cache once, then O(log n) lookup.
+        if (!_pageOffsetCacheValid || _pageTops.Length != pageCount)
+        {
+            if (!TryRebuildPageOffsetCache(pageCount))
+                return GetVisiblePageIndicesByContainers(viewportH);
+        }
+
+        double scrollY = PdfScrollViewer.Offset.Y;
+        double topEdge = scrollY;
+        double bottomEdge = scrollY + viewportH;
+
+        // Binary search: find first page with top >= scrollY; visible range starts at max(0, idx-1).
+        int lo = 0, hi = pageCount;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) >>> 1;
+            if (_pageTops[mid] < topEdge) lo = mid + 1;
+            else hi = mid;
+        }
+        int start = Math.Max(0, lo - 1);
+
+        for (int i = start; i < pageCount; i++)
+        {
+            if (_pageTops[i] > bottomEdge) break;
+            if (_pageTops[i] + _pageHeights[i] < topEdge) continue;
+            visible.Add(i);
+        }
+        return visible;
+    }
+
+    private HashSet<int> GetVisiblePageIndicesByContainers(double viewportH)
+    {
+        var visible = new HashSet<int>();
+        var itemsControl = (ItemsControl)ZoomTransform.Child!;
         bool foundVisible = false;
 
         for (int i = 0; i < ViewModel.Pages.Count; i++)
@@ -184,10 +267,37 @@ public partial class MainWindow
             }
             else if (foundVisible && top.Value.Y > viewportH)
             {
-                break; // all remaining pages are below viewport (works for both list and grid)
+                break;
             }
         }
         return visible;
+    }
+
+    // Computes scroll-content-relative top and height for every page from container bounds.
+    // Returns false if any container is missing or un-laid-out (caller falls back to container walk).
+    private bool TryRebuildPageOffsetCache(int pageCount)
+    {
+        var itemsControl = (ItemsControl)ZoomTransform.Child!;
+        double scrollY = PdfScrollViewer.Offset.Y;
+
+        if (_pageTops.Length != pageCount)
+        {
+            _pageTops = new double[pageCount];
+            _pageHeights = new double[pageCount];
+        }
+
+        for (int i = 0; i < pageCount; i++)
+        {
+            var container = itemsControl.ContainerFromIndex(i);
+            if (container == null) return false;
+            var top = container.TranslatePoint(new Point(0, 0), PdfScrollViewer);
+            if (top == null) return false;
+            _pageTops[i] = top.Value.Y + scrollY;
+            _pageHeights[i] = container.Bounds.Height;
+        }
+
+        _pageOffsetCacheValid = true;
+        return true;
     }
 
     private async Task RerenderVisibleAsync()
@@ -211,15 +321,25 @@ public partial class MainWindow
             .ToList();
 
         // Render in parallel — each page is independent.
+        // Concurrency is bounded by _renderGate to avoid overwhelming pdfium / CPU.
         // Continuations run on the UI thread so bitmap swaps are safe.
         var renderTasks = pagesToRender.Select(async item =>
         {
             var (page, pdfBytes, srcIdx, rotDeg, password) = item;
             try
             {
-                var bitmap = await Task.Run(
-                    () => renderService.RenderPage(pdfBytes, srcIdx, dpi, rotDeg, password),
-                    cts.Token);
+                await _renderGate.WaitAsync(cts.Token);
+                Avalonia.Media.Imaging.Bitmap bitmap;
+                try
+                {
+                    bitmap = await Task.Run(
+                        () => renderService.RenderPage(pdfBytes, srcIdx, dpi, rotDeg, password),
+                        cts.Token);
+                }
+                finally
+                {
+                    _renderGate.Release();
+                }
 
                 if (cts.Token.IsCancellationRequested)
                 {
@@ -246,12 +366,22 @@ public partial class MainWindow
             .Where(a => a.RenderedBitmap != null && a.RenderedDpi != dpi)
             .ToList();
 
+        var svgRenderer = ViewModel.SvgRenderer;
         var annTasks = annotations.Select(async ann =>
         {
             try
             {
                 if (cts.Token.IsCancellationRequested) return;
-                var bitmap = await Task.Run(() => ann.RenderBitmap(dpi), cts.Token);
+                await _renderGate.WaitAsync(cts.Token);
+                Avalonia.Media.Imaging.Bitmap bitmap;
+                try
+                {
+                    bitmap = await Task.Run(() => svgRenderer.RenderForAnnotation(ann, dpi), cts.Token);
+                }
+                finally
+                {
+                    _renderGate.Release();
+                }
                 if (cts.Token.IsCancellationRequested) { bitmap.Dispose(); return; }
                 ann.ReplaceRenderedBitmap(bitmap, dpi);
             }
@@ -277,7 +407,11 @@ public partial class MainWindow
             UpdateCurrentPageIndicator();
             await RerenderVisibleAsync();
             try { await RenderRemainingPagesAsync(); }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Background render failed: {ex.Message}"); }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Background render failed: {ex}");
+            }
         }, DispatcherPriority.Background);
     }
 
@@ -294,25 +428,41 @@ public partial class MainWindow
             .Where(p => !_pageDpi.ContainsKey(p))
             .ToList();
 
-        foreach (var page in unrendered)
+        int dop = Math.Max(1, Environment.ProcessorCount / 2);
+        try
         {
-            if (cts.Token.IsCancellationRequested) return;
-            if (_pageDpi.ContainsKey(page)) continue;
+            await Parallel.ForEachAsync(
+                unrendered,
+                new ParallelOptions { MaxDegreeOfParallelism = dop, CancellationToken = cts.Token },
+                async (page, innerCt) =>
+                {
+                    if (_pageDpi.ContainsKey(page)) return;
+                    await _renderGate.WaitAsync(innerCt);
+                    Avalonia.Media.Imaging.Bitmap bitmap;
+                    try
+                    {
+                        bitmap = await Task.Run(
+                            () => renderService.RenderPage(
+                                page.Source.PdfBytes, page.Source.SourcePageIndex, dpi, page.RotationDegrees, page.Source.Password),
+                            innerCt);
+                    }
+                    finally
+                    {
+                        _renderGate.Release();
+                    }
 
-            try
-            {
-                var bitmap = await Task.Run(
-                    () => renderService.RenderPage(
-                        page.Source.PdfBytes, page.Source.SourcePageIndex, dpi, page.RotationDegrees, page.Source.Password),
-                    cts.Token);
+                    if (innerCt.IsCancellationRequested) { bitmap.Dispose(); return; }
 
-                if (cts.Token.IsCancellationRequested) { bitmap.Dispose(); return; }
-
-                page.ReplaceBitmap(bitmap);
-                _pageDpi[page] = dpi;
-            }
-            catch (OperationCanceledException) { return; }
+                    // Bitmap swap must happen on the UI thread.
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        if (innerCt.IsCancellationRequested) { bitmap.Dispose(); return; }
+                        page.ReplaceBitmap(bitmap);
+                        _pageDpi[page] = dpi;
+                    });
+                });
         }
+        catch (OperationCanceledException) { }
     }
 
     private void OnPageStructureChanged()
@@ -321,12 +471,14 @@ public partial class MainWindow
         var current = new HashSet<PageItem>(ViewModel.Pages);
         foreach (var key in _pageDpi.Keys.Where(k => !current.Contains(k)).ToList())
             _pageDpi.TryRemove(key, out _);
+        _pageOffsetCacheValid = false;
     }
 
     private async void OnPageRotated(PageItem page)
     {
         int dpi = _targetDpi;
         var renderService = ViewModel.RenderService;
+        _pageOffsetCacheValid = false;
         try
         {
             var bitmap = await Task.Run(() =>
@@ -346,11 +498,11 @@ public partial class MainWindow
 
     private void OnToggleGridMode(object? sender, RoutedEventArgs e)
     {
-        ViewModel.IsGridMode = !ViewModel.IsGridMode;
-        ApplyGridMode(ViewModel.IsGridMode);
+        ViewModel.Viewport.IsGridMode = !ViewModel.Viewport.IsGridMode;
+        ApplyGridMode(ViewModel.Viewport.IsGridMode);
     }
 
-    internal void ApplyGridMode(bool gridMode)
+    public void ApplyGridMode(bool gridMode)
     {
         var itemsControl = (ItemsControl)ZoomTransform.Child!;
 
@@ -380,6 +532,9 @@ public partial class MainWindow
             GridToggleIcon.Data = IconService.CreateGeometry(Iconr.Icon.squares_four);
         }
 
+        // Grid switch invalidates the page-offset cache (different layout + heights).
+        _pageOffsetCacheValid = false;
+
         // Visible pages change when layout switches, schedule re-render
         ScheduleRerender();
     }
@@ -387,6 +542,7 @@ public partial class MainWindow
     // ═══ Zoom buttons ═══
 
     private void OnFitToWidth(object? sender, RoutedEventArgs e) => FitToWidth();
-    private void OnZoomIn(object? sender, RoutedEventArgs e) => ApplyZoom(ZoomIn());
-    private void OnZoomOut(object? sender, RoutedEventArgs e) => ApplyZoom(ZoomOut());
+    private void OnFitToHeight(object? sender, RoutedEventArgs e) => FitToHeight();
+    private void OnZoomIn(object? sender, RoutedEventArgs e) => ApplyZoom(NextZoomIn());
+    private void OnZoomOut(object? sender, RoutedEventArgs e) => ApplyZoom(NextZoomOut());
 }

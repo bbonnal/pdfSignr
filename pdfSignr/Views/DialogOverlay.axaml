@@ -5,7 +5,7 @@
 
   <Panel>
     <!-- Backdrop dims the window and blocks interaction -->
-    <Border x:Name="Backdrop" Background="#80000000" IsHitTestVisible="True" />
+    <Border x:Name="Backdrop" Background="{DynamicResource BackdropBrush}" IsHitTestVisible="True" />
 
     <!-- Dialog card -->
     <Border HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -19,7 +19,7 @@
         <TextBlock x:Name="MessageText" FontSize="13" TextWrapping="Wrap" Opacity="0.8" Margin="0,0,0,8" />
 
         <!-- Error hint (password retry) -->
-        <TextBlock x:Name="ErrorText" FontSize="12" Foreground="IndianRed"
+        <TextBlock x:Name="ErrorText" FontSize="12" Foreground="{DynamicResource ErrorForeground}"
                    IsVisible="False" Margin="0,0,0,4" />
 
         <!-- Input field (text or password) -->

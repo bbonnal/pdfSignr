@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using PdfSharp.Drawing;
 using PdfSharp.Pdf;
 using PdfSharp.Pdf.IO;
@@ -8,72 +9,121 @@ namespace pdfSignr.Services;
 /// <summary>Saves annotated PDF pages to disk using PDFsharp, embedding text and image annotations.</summary>
 public class PdfSaveService : IPdfSaveService
 {
-    /// <summary>Saves multiple pages with annotations to a new PDF file.</summary>
-    public void Save(
+    private readonly ISvgRenderService _svgRenderer;
+    private readonly ILogger<PdfSaveService> _logger;
+
+    public PdfSaveService(ISvgRenderService svgRenderer, ILogger<PdfSaveService> logger)
+    {
+        _svgRenderer = svgRenderer;
+        _logger = logger;
+    }
+
+    public async Task<SaveResult> SaveAsync(
         string outputPath,
         IEnumerable<(PageSource Source, int RotationDegrees, double OriginalWidthPt, double OriginalHeightPt,
             IEnumerable<Annotation> Annotations)> pages,
-        string? outputPassword = null)
+        string? outputPassword = null,
+        IProgress<int>? progress = null,
+        CancellationToken ct = default)
     {
-        var sourceDocCache = new Dictionary<byte[], PdfDocument>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
-        var fileCache = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
-        var outputDoc = new PdfDocument();
+        var pageList = pages.ToList();
+        int totalPages = pageList.Count;
 
-        try
+        return await Task.Run(() =>
         {
-            foreach (var (source, rotationDegrees, origW, origH, annotations) in pages)
+            var sourceDocCache = new Dictionary<byte[], PdfDocument>(ReferenceEqualityComparer.Instance);
+            var sourceStreams = new List<MemoryStream>();
+            var fileCache = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            var outputDoc = new PdfDocument();
+
+            try
             {
-                if (!sourceDocCache.TryGetValue(source.PdfBytes, out var sourceDoc))
+                for (int pageIdx = 0; pageIdx < totalPages; pageIdx++)
                 {
-                    // PdfReader reads the stream eagerly in Import mode; stream lifetime is managed by PdfDocument.Dispose()
-                    sourceDoc = string.IsNullOrEmpty(source.Password)
-                        ? PdfReader.Open(new MemoryStream(source.PdfBytes), PdfDocumentOpenMode.Import)
-                        : PdfReader.Open(new MemoryStream(source.PdfBytes), source.Password, PdfDocumentOpenMode.Import);
-                    sourceDocCache[source.PdfBytes] = sourceDoc;
-                }
+                    ct.ThrowIfCancellationRequested();
+                    var (source, rotationDegrees, origW, origH, annotations) = pageList[pageIdx];
 
-                var importedPage = outputDoc.AddPage(sourceDoc.Pages[source.SourcePageIndex]);
-
-                if (rotationDegrees != 0)
-                    importedPage.Rotate = (importedPage.Rotate + rotationDegrees) % 360;
-
-                var annList = annotations.ToList();
-                if (annList.Count > 0)
-                {
-                    using var gfx = XGraphics.FromPdfPage(importedPage, XGraphicsPdfPageOptions.Append);
-                    foreach (var annotation in annList)
+                    if (!sourceDocCache.TryGetValue(source.PdfBytes, out var sourceDoc))
                     {
-                        // Inverse-transform annotation coordinates from rotated view back to original page space
-                        var (drawX, drawY) = InverseTransformAnnotation(
-                            annotation.X, annotation.Y, annotation.WidthPt, annotation.HeightPt,
-                            rotationDegrees, origW, origH);
+                        var ms = new MemoryStream(source.PdfBytes);
+                        sourceStreams.Add(ms);
+                        sourceDoc = string.IsNullOrEmpty(source.Password)
+                            ? PdfReader.Open(ms, PdfDocumentOpenMode.Import)
+                            : PdfReader.Open(ms, source.Password, PdfDocumentOpenMode.Import);
+                        sourceDocCache[source.PdfBytes] = sourceDoc;
+                    }
 
-                        switch (annotation)
+                    var importedPage = outputDoc.AddPage(sourceDoc.Pages[source.SourcePageIndex]);
+
+                    if (rotationDegrees != 0)
+                        importedPage.Rotate = (importedPage.Rotate + rotationDegrees) % 360;
+
+                    var annList = annotations.ToList();
+                    if (annList.Count > 0)
+                    {
+                        using var gfx = XGraphics.FromPdfPage(importedPage, XGraphicsPdfPageOptions.Append);
+                        foreach (var annotation in annList)
                         {
-                            case TextAnnotation text:
-                                DrawText(gfx, text, drawX, drawY);
-                                break;
-                            case SvgAnnotation svg:
-                                DrawSvg(gfx, svg, drawX, drawY, fileCache);
-                                break;
+                            var (drawX, drawY) = InverseTransformAnnotation(
+                                annotation.X, annotation.Y, annotation.WidthPt, annotation.HeightPt,
+                                rotationDegrees, origW, origH);
+
+                            switch (annotation)
+                            {
+                                case TextAnnotation text:
+                                    DrawText(gfx, text, drawX, drawY);
+                                    break;
+                                case SvgAnnotation svg:
+                                    DrawSvg(gfx, svg, drawX, drawY, fileCache, _svgRenderer);
+                                    break;
+                            }
                         }
                     }
+
+                    progress?.Report((pageIdx + 1) * 100 / totalPages);
                 }
-            }
 
-            if (!string.IsNullOrEmpty(outputPassword))
+                if (!string.IsNullOrEmpty(outputPassword))
+                {
+                    outputDoc.SecuritySettings.UserPassword = outputPassword;
+                    outputDoc.SecuritySettings.OwnerPassword = outputPassword;
+                }
+
+                outputDoc.Save(outputPath);
+                long outputSize = new FileInfo(outputPath).Length;
+                return new SaveResult(totalPages, outputSize);
+            }
+            catch (OperationCanceledException)
             {
-                outputDoc.SecuritySettings.UserPassword = outputPassword;
-                outputDoc.SecuritySettings.OwnerPassword = outputPassword;
+                TryDeletePartial(outputPath);
+                throw;
             }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "PDF save failed for {Path}", outputPath);
+                TryDeletePartial(outputPath);
+                throw;
+            }
+            finally
+            {
+                outputDoc.Dispose();
+                foreach (var doc in sourceDocCache.Values)
+                    doc.Dispose();
+                foreach (var s in sourceStreams)
+                    s.Dispose();
+            }
+        }, ct);
+    }
 
-            outputDoc.Save(outputPath);
-        }
-        finally
+    private void TryDeletePartial(string path)
+    {
+        try
         {
-            outputDoc.Dispose();
-            foreach (var doc in sourceDocCache.Values)
-                doc.Dispose();
+            if (File.Exists(path)) File.Delete(path);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete partial output file {Path}", path);
         }
     }
 
@@ -116,7 +166,7 @@ public class PdfSaveService : IPdfSaveService
     }
 
     private static void DrawSvg(XGraphics gfx, SvgAnnotation svg, double drawX, double drawY,
-        Dictionary<string, byte[]> fileCache)
+        Dictionary<string, byte[]> fileCache, ISvgRenderService svgRenderer)
     {
         if (svg.IsRaster)
         {
@@ -125,7 +175,7 @@ public class PdfSaveService : IPdfSaveService
         }
 
         double scale = svg.OriginalWidthPt > 0 ? svg.WidthPt / svg.OriginalWidthPt : svg.Scale;
-        var pdfBytes = SvgRenderService.RenderToVectorPdf(svg.SvgFilePath, scale);
+        var pdfBytes = svgRenderer.RenderToVectorPdf(svg.SvgFilePath, scale);
         if (pdfBytes.Length == 0) return;
 
         using var stream = new MemoryStream(pdfBytes);

@@ -23,8 +23,11 @@ public abstract partial class Annotation : ObservableObject, IDisposable
 
 public partial class TextAnnotation : Annotation
 {
+    // Static by necessity: Models cannot hold injected services. Set once in App.Initialize from the DI container.
+    internal static IFontCatalog? Catalog;
+
     [ObservableProperty] private string _text = "Text";
-    [ObservableProperty] private string _fontFamily = FontResolver.PdfFontNames[0];
+    [ObservableProperty] private string _fontFamily = "";
     private double _widthPt = 40;
     private double _heightPt = 18;
     private double? _cachedFontSize;
@@ -57,11 +60,13 @@ public partial class TextAnnotation : Annotation
     private double ComputeFontSize()
     {
         if (_heightPt <= 0) return 12;
-        // Measure text at a reference size to find the ratio
+        if (string.IsNullOrEmpty(FontFamily)) return _heightPt;
+        if (Catalog == null)
+            throw new InvalidOperationException($"{nameof(TextAnnotation)}.{nameof(Catalog)} not initialized");
         const double refSize = 72.0;
         double dpiScale = PdfConstants.DpiScale;
         var typeface = TypefaceCache.GetOrAdd(FontFamily,
-            ff => new Typeface(MapFontForMeasure(ff)));
+            ff => new Typeface(Catalog.GetMeasureFontFamily(ff)));
         var ft = new FormattedText("Xg", CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight, typeface, refSize * dpiScale, Brushes.Black);
         double measuredHeightPt = ft.Height / dpiScale;
@@ -70,12 +75,18 @@ public partial class TextAnnotation : Annotation
     }
 
     internal static FontFamily MapFontForMeasure(string pdfFont)
-        => new(FontResolver.GetAvaloniaFontUri(pdfFont));
+    {
+        if (Catalog != null) return Catalog.GetMeasureFontFamily(pdfFont);
+        return new FontFamily("Sans Serif");
+    }
 }
 
 /// <summary>Annotation backed by an external file (SVG vector or raster PNG/JPG).</summary>
 public partial class SvgAnnotation : Annotation
 {
+    // Static by necessity: Models cannot hold injected services. Set once in App.Initialize.
+    internal static ISvgRenderService? Renderer;
+
     [ObservableProperty] private string _svgFilePath = "";
     [ObservableProperty] private double _scale = 1.0;
     [ObservableProperty] private double _originalWidthPt;
@@ -118,16 +129,10 @@ public partial class SvgAnnotation : Annotation
     /// <summary>Re-renders the display bitmap at the given DPI. Call from any thread; swap is UI-safe.</summary>
     public void ReRender(int dpi)
     {
-        var bitmap = RenderBitmap(dpi);
+        if (Renderer == null)
+            throw new InvalidOperationException($"{nameof(SvgAnnotation)}.{nameof(Renderer)} not initialized");
+        var bitmap = Renderer.RenderForAnnotation(this, dpi);
         ReplaceRenderedBitmap(bitmap, dpi);
-    }
-
-    /// <summary>Creates a new rendered bitmap at the given DPI. Thread-safe (no UI mutation).</summary>
-    public Bitmap RenderBitmap(int dpi)
-    {
-        return IsRaster
-            ? SvgRenderService.ResampleForDisplay(SvgFilePath, WidthPt, HeightPt, dpi)
-            : SvgRenderService.RenderForDisplay(SvgFilePath, Scale, dpi);
     }
 
     public override void Dispose()

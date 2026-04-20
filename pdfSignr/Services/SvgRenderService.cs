@@ -1,3 +1,5 @@
+using Avalonia.Media.Imaging;
+using Microsoft.Extensions.Logging;
 using pdfSignr.Models;
 using SkiaSharp;
 using Svg.Skia;
@@ -5,10 +7,17 @@ using Svg.Skia;
 namespace pdfSignr.Services;
 
 /// <summary>Renders SVG and raster images for display and PDF embedding via SkiaSharp and Svg.Skia.</summary>
-public static class SvgRenderService
+public class SvgRenderService : ISvgRenderService
 {
+    private readonly ILogger<SvgRenderService> _logger;
+
+    public SvgRenderService(ILogger<SvgRenderService> logger)
+    {
+        _logger = logger;
+    }
+
     /// <summary>Returns the intrinsic dimensions of an SVG file in PDF points.</summary>
-    public static (double WidthPt, double HeightPt) GetSvgSize(string svgPath)
+    public (double WidthPt, double HeightPt) GetSvgSize(string svgPath)
     {
         using var svg = new SKSvg();
         svg.Load(svgPath);
@@ -19,7 +28,7 @@ public static class SvgRenderService
     }
 
     /// <summary>Renders an SVG to an Avalonia bitmap at the given scale and DPI.</summary>
-    public static Avalonia.Media.Imaging.Bitmap RenderForDisplay(string svgPath, double scale, int renderDpi)
+    public Bitmap RenderForDisplay(string svgPath, double scale, int renderDpi)
     {
         var (pixelW, pixelH, svg, bounds) = PrepareRender(svgPath, scale, renderDpi);
         using var _ = svg;
@@ -27,7 +36,7 @@ public static class SvgRenderService
     }
 
     /// <summary>Returns SVG size and rendered bitmap in a single parse (avoids loading the SVG twice).</summary>
-    public static (double WidthPt, double HeightPt, Avalonia.Media.Imaging.Bitmap Bitmap)
+    public (double WidthPt, double HeightPt, Bitmap Bitmap)
         GetSizeAndRenderForDisplay(string svgPath, double scale, int renderDpi)
     {
         var (pixelW, pixelH, svg, bounds) = PrepareRender(svgPath, scale, renderDpi);
@@ -41,7 +50,7 @@ public static class SvgRenderService
     }
 
     /// <summary>Renders an SVG to a vector PDF byte stream for embedding in saved documents.</summary>
-    public static byte[] RenderToVectorPdf(string svgPath, double scale)
+    public byte[] RenderToVectorPdf(string svgPath, double scale)
     {
         using var svg = new SKSvg();
         svg.Load(svgPath);
@@ -65,7 +74,7 @@ public static class SvgRenderService
     }
 
     /// <summary>Returns the dimensions of a raster image (PNG/JPG) in PDF points.</summary>
-    public static (double WidthPt, double HeightPt) GetImageSize(string path)
+    public (double WidthPt, double HeightPt) GetImageSize(string path)
     {
         using var codec = SKCodec.Create(path);
         if (codec == null) return (0, 0);
@@ -73,20 +82,28 @@ public static class SvgRenderService
     }
 
     /// <summary>Resamples a raster image to the given display dimensions and DPI.</summary>
-    public static Avalonia.Media.Imaging.Bitmap ResampleForDisplay(string path, double widthPt, double heightPt, int dpi)
+    public Bitmap ResampleForDisplay(string path, double widthPt, double heightPt, int dpi)
     {
         int pixelW = Math.Max(1, (int)(widthPt / PdfConstants.PointsPerInch * dpi));
         int pixelH = Math.Max(1, (int)(heightPt / PdfConstants.PointsPerInch * dpi));
 
         using var original = SKBitmap.Decode(path);
-        if (original == null) return new Avalonia.Media.Imaging.Bitmap(path);
+        if (original == null) return new Bitmap(path);
 
         var sampling = new SKSamplingOptions(SKCubicResampler.Mitchell);
         using var resized = original.Resize(new SKSizeI(pixelW, pixelH), sampling);
         return BitmapConvert.ToAvaloniaBitmap(resized ?? original);
     }
 
-    private static Avalonia.Media.Imaging.Bitmap RenderSvgToBitmap(SKSvg svg, SKRect bounds, int pixelW, int pixelH)
+    /// <summary>Renders an annotation's bitmap using its current state (raster vs vector).</summary>
+    public Bitmap RenderForAnnotation(SvgAnnotation annotation, int dpi)
+    {
+        return annotation.IsRaster
+            ? ResampleForDisplay(annotation.SvgFilePath, annotation.WidthPt, annotation.HeightPt, dpi)
+            : RenderForDisplay(annotation.SvgFilePath, annotation.Scale, dpi);
+    }
+
+    private static Bitmap RenderSvgToBitmap(SKSvg svg, SKRect bounds, int pixelW, int pixelH)
     {
         using var surface = SKSurface.Create(new SKImageInfo(pixelW, pixelH, SKColorType.Bgra8888, SKAlphaType.Premul));
         var canvas = surface.Canvas;
@@ -100,12 +117,16 @@ public static class SvgRenderService
         return BitmapConvert.ToAvaloniaBitmap(skBitmap);
     }
 
-    private static (int PixelW, int PixelH, SKSvg Svg, SKRect Bounds) PrepareRender(
+    private (int PixelW, int PixelH, SKSvg Svg, SKRect Bounds) PrepareRender(
         string svgPath, double scale, int dpi)
     {
         var svg = new SKSvg();
         svg.Load(svgPath);
-        if (svg.Picture == null) throw new InvalidOperationException("Failed to load SVG");
+        if (svg.Picture == null)
+        {
+            _logger.LogWarning("Failed to load SVG at {Path}", svgPath);
+            throw new InvalidOperationException("Failed to load SVG");
+        }
 
         var bounds = svg.Picture.CullRect;
         double widthPt = bounds.Width * PdfConstants.SvgDpiToPoints * scale;
