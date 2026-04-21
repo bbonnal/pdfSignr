@@ -15,14 +15,14 @@ internal sealed class AnnotationManipulator
 
     public Mode State { get; private set; } = Mode.Idle;
     public Annotation? Target { get; private set; }
-    public AnnotationHandle ActiveHandle { get; private set; } = AnnotationHandle.None;
+    internal AnnotationHandle ActiveHandle { get; private set; } = AnnotationHandle.None;
 
-    // Start snapshot — used to compute deltas and to report old values on release for undo.
-    public double StartX { get; private set; }
-    public double StartY { get; private set; }
-    public double StartW { get; private set; }
-    public double StartH { get; private set; }
-    public double StartRot { get; private set; }
+    // Read by PageCanvas on release to emit old→new values for the undo command.
+    internal double StartX { get; private set; }
+    internal double StartY { get; private set; }
+    internal double StartW { get; private set; }
+    internal double StartH { get; private set; }
+    internal double StartRot { get; private set; }
     private Point _dragStart;
     private double _startAngle;
 

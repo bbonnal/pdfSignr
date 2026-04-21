@@ -207,8 +207,8 @@ public partial class MainWindow
                 return GetVisiblePageIndicesByContainers(viewportH);
         }
 
-        return new HashSet<int>(ViewportPolicy.VisibleIndices(
-            _pageTops, _pageHeights, PdfScrollViewer.Offset.Y, viewportH));
+        return ViewportPolicy.VisibleIndices(
+            _pageTops, _pageHeights, PdfScrollViewer.Offset.Y, viewportH);
     }
 
     private HashSet<int> GetVisiblePageIndicesByContainers(double viewportH)

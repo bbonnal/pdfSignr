@@ -26,11 +26,7 @@ public abstract partial class Annotation : ObservableObject, IDisposable
 
 public partial class TextAnnotation : Annotation
 {
-    /// <summary>
-    /// Font-metrics catalog used to derive <see cref="FontSize"/> from <see cref="HeightPt"/>.
-    /// Optional — if unset, FontSize degrades to the bounding-box height. Set at construction
-    /// so that saving, rendering, and status-bar display all use the same measurement.
-    /// </summary>
+    /// <summary>Font-metrics catalog; if null, <see cref="FontSize"/> degrades to <see cref="HeightPt"/>.</summary>
     public IFontCatalog? Measurer { get; init; }
 
     [ObservableProperty] private string _text = "Text";
@@ -61,8 +57,6 @@ public partial class TextAnnotation : Annotation
         set { if (SetProperty(ref _heightPt, value)) { _cachedFontSize = null; OnPropertyChanged(nameof(FontSize)); } }
     }
 
-    // Process-wide typeface cache, keyed by PDF font name. Cache entries are idempotent
-    // — the mapping from name to face is stable for the lifetime of the app.
     internal static readonly ConcurrentDictionary<string, Typeface> TypefaceCache = new();
 
     internal Typeface MeasureTypeface() => TypefaceCache.GetOrAdd(FontFamily,
@@ -93,11 +87,7 @@ public partial class TextAnnotation : Annotation
 /// <summary>Annotation backed by an external file (SVG vector or raster PNG/JPG).</summary>
 public partial class SvgAnnotation : Annotation
 {
-    /// <summary>
-    /// SVG/raster renderer used by <see cref="ReRender"/> to produce the display bitmap.
-    /// Optional — if unset, <see cref="ReRender"/> becomes a no-op (tests without a renderer
-    /// still exercise other parts of the annotation's behavior).
-    /// </summary>
+    /// <summary>Display-bitmap renderer; if null, <see cref="ReRender"/> is a no-op.</summary>
     public ISvgRenderService? Renderer { get; init; }
 
     [ObservableProperty] private string _svgFilePath = "";
@@ -139,8 +129,7 @@ public partial class SvgAnnotation : Annotation
         old?.Dispose();
     }
 
-    /// <summary>Re-renders the display bitmap at the given DPI. Call from any thread; swap is UI-safe.
-    /// No-op when no <see cref="Renderer"/> was injected.</summary>
+    /// <summary>Re-renders the display bitmap at the given DPI. Call from any thread; swap is UI-safe.</summary>
     public void ReRender(int dpi)
     {
         if (Renderer == null) return;

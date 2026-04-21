@@ -16,10 +16,7 @@ internal static class ViewportPolicy
     /// <summary>Max pixels a single rendered bitmap may occupy (4 bytes/pixel → 256 MB cap).</summary>
     public const long MaxBitmapPixels = 64L * 1024 * 1024;
 
-    /// <summary>
-    /// Snaps a requested DPI to a fixed ladder. Reduces re-render frequency during smooth
-    /// zoom while keeping vector PDFs sharp — no hard ceiling.
-    /// </summary>
+    /// <summary>Maps a raw DPI to a fixed ladder so smooth zoom doesn't re-render every frame.</summary>
     public static int QuantizeDpi(int dpi)
     {
         if (dpi <= 100) return 96;
@@ -32,10 +29,8 @@ internal static class ViewportPolicy
         return 1200;
     }
 
-    /// <summary>
-    /// Caps the effective DPI so a single-page bitmap stays under <see cref="MaxBitmapPixels"/>.
-    /// Derived from pixels = widthPt * heightPt * dpi² / 72².
-    /// </summary>
+    /// <summary>Caps DPI so a single bitmap stays under <see cref="MaxBitmapPixels"/>
+    /// (pixels = widthPt·heightPt·dpi²/72²).</summary>
     public static int ClampDpiForPage(int requestedDpi, double widthPt, double heightPt)
     {
         double area = widthPt * heightPt;
@@ -45,17 +40,14 @@ internal static class ViewportPolicy
         return Math.Max(72, clamped);
     }
 
-    /// <summary>
-    /// Returns the page indices intersecting the viewport, given per-page tops/heights in
-    /// scroll-content space. Uses a binary search to find the first candidate, then linearly
-    /// scans until past the viewport. Inputs must be same length; tops must be sorted ascending.
-    /// </summary>
-    public static IEnumerable<int> VisibleIndices(
+    /// <summary>Page indices intersecting the viewport. Tops must be ascending and the
+    /// two arrays the same length.</summary>
+    public static HashSet<int> VisibleIndices(
         double[] pageTops, double[] pageHeights, double scrollY, double viewportHeight)
     {
+        var visible = new HashSet<int>();
         int pageCount = pageTops.Length;
-        if (pageCount == 0 || pageHeights.Length != pageCount)
-            yield break;
+        if (pageCount == 0 || pageHeights.Length != pageCount) return visible;
 
         double topEdge = scrollY;
         double bottomEdge = scrollY + viewportHeight;
@@ -67,17 +59,16 @@ internal static class ViewportPolicy
             if (pageTops[mid] < topEdge) lo = mid + 1;
             else hi = mid;
         }
-        int start = Math.Max(0, lo - 1);
 
-        for (int i = start; i < pageCount; i++)
+        for (int i = Math.Max(0, lo - 1); i < pageCount; i++)
         {
             if (pageTops[i] > bottomEdge) break;
             if (pageTops[i] + pageHeights[i] < topEdge) continue;
-            yield return i;
+            visible.Add(i);
         }
+        return visible;
     }
 
-    /// <summary>Expands a visible range by a ring radius, clamped to the page-count domain.</summary>
     public static (int Min, int Max) ExpandRing(int visibleMin, int visibleMax, int radius, int pageCount)
     {
         int min = Math.Max(0, visibleMin - radius);

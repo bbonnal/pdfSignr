@@ -183,9 +183,7 @@ public partial class MainViewModel
             $"Rotate {selected.Count} pages", states, p => PageRotated?.Invoke(p)));
     }
 
-    // Pre-computes the rotated state without mutating anything. The command's Execute
-    // applies it atomically — so a mid-loop failure never leaves half-rotated pages
-    // without a matching undo entry.
+    // Pure: applies no mutations. Keeps rotate atomic — no half-rotated state on failure.
     private static RotatePagesCommand.PageState BuildRotateState(PageItem page, int degrees)
     {
         int oldRotation = page.RotationDegrees;
