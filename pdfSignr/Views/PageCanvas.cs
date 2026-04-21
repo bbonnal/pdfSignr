@@ -63,13 +63,9 @@ public class PageCanvas : Control
     private static readonly Cursor CursorTopRight = new(StandardCursorType.TopRightCorner);
     private static readonly Cursor CursorDragMove = new(StandardCursorType.DragMove);
 
-    // Pointer state
-    private enum State { Idle, Dragging, Resizing, Rotating }
-    private State _state = State.Idle;
-    private AnnotationHandle _activeHandle = AnnotationHandle.None;
-    private Annotation? _target;
-    private Point _dragStart;
-    private double _startX, _startY, _startW, _startH, _startRot, _startAngle;
+    // Pointer-driven annotation manipulation state lives off-control so the state
+    // machine and its math are unit-testable without an Avalonia visual tree.
+    private readonly AnnotationManipulator _manipulator = new();
 
     // ═══ Routed events ═══
 
@@ -201,7 +197,7 @@ public class PageCanvas : Control
             }
             if (h != AnnotationHandle.None)
             {
-                BeginHandleInteraction(selected, h, pos);
+                _manipulator.BeginHandle(selected, h, pos, Scale);
                 e.Pointer.Capture(this);
                 e.Handled = true;
                 return;
@@ -216,14 +212,7 @@ public class PageCanvas : Control
                 if (AnnotationHitTester.HitBody(Annotations[i], pos, Scale))
                 {
                     RaiseEvent(new AnnotationSelectedEventArgs(AnnotationSelectedEvent, Annotations[i]));
-                    _state = State.Dragging;
-                    _target = Annotations[i];
-                    _dragStart = pos;
-                    _startX = Annotations[i].X;
-                    _startY = Annotations[i].Y;
-                    _startW = Annotations[i].WidthPt;
-                    _startH = Annotations[i].HeightPt;
-                    _startRot = Annotations[i].Rotation;
+                    _manipulator.BeginDrag(Annotations[i], pos);
                     Cursor = CursorDragMove;
                     e.Pointer.Capture(this);
                     e.Handled = true;
@@ -242,139 +231,46 @@ public class PageCanvas : Control
         base.OnPointerMoved(e);
         var pos = e.GetPosition(this);
 
-        switch (_state)
-        {
-            case State.Dragging when _target != null:
-                _target.X = _startX + (pos.X - _dragStart.X) / Scale;
-                _target.Y = _startY + (pos.Y - _dragStart.Y) / Scale;
-                break;
-            case State.Resizing when _target != null:
-                DoResize(pos);
-                break;
-            case State.Rotating when _target != null:
-                DoRotate(pos);
-                break;
-            case State.Idle:
-                UpdateIdleCursor(pos);
-                break;
-        }
+        if (_manipulator.IsIdle)
+            UpdateIdleCursor(pos);
+        else
+            _manipulator.ProcessMove(pos, Scale);
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
 
-        if (_state == State.Dragging && _target != null)
+        var target = _manipulator.Target;
+        if (_manipulator.State == AnnotationManipulator.Mode.Dragging && target != null)
         {
-            (_target.X, _target.Y) = PagePlacement.ClampToPage(
-                _target.X, _target.Y, _target.WidthPt, _target.HeightPt, PageWidthPt, PageHeightPt);
+            (target.X, target.Y) = PagePlacement.ClampToPage(
+                target.X, target.Y, target.WidthPt, target.HeightPt, PageWidthPt, PageHeightPt);
         }
 
-        if (_state == State.Resizing && _target is SvgAnnotation svg)
+        if (_manipulator.State == AnnotationManipulator.Mode.Resizing && target is SvgAnnotation svg)
         {
             svg.Scale = svg.OriginalWidthPt > 0 ? svg.WidthPt / svg.OriginalWidthPt : 1;
             svg.ReRender(PdfConstants.RenderDpi);
         }
 
-        if (_target != null && _state != State.Idle)
+        if (target != null && _manipulator.State != AnnotationManipulator.Mode.Idle)
         {
-            bool changed = _target.X != _startX || _target.Y != _startY
-                        || _target.WidthPt != _startW || _target.HeightPt != _startH
-                        || _target.Rotation != _startRot;
+            bool changed = target.X != _manipulator.StartX || target.Y != _manipulator.StartY
+                        || target.WidthPt != _manipulator.StartW || target.HeightPt != _manipulator.StartH
+                        || target.Rotation != _manipulator.StartRot;
             if (changed)
             {
                 RaiseEvent(new AnnotationManipulatedEventArgs(
-                    AnnotationManipulatedEvent, _target,
-                    _startX, _startY, _startW, _startH, _startRot,
-                    _target.X, _target.Y, _target.WidthPt, _target.HeightPt, _target.Rotation));
+                    AnnotationManipulatedEvent, target,
+                    _manipulator.StartX, _manipulator.StartY, _manipulator.StartW, _manipulator.StartH, _manipulator.StartRot,
+                    target.X, target.Y, target.WidthPt, target.HeightPt, target.Rotation));
             }
         }
 
-        _state = State.Idle;
-        _activeHandle = AnnotationHandle.None;
-        _target = null;
+        _manipulator.Reset();
         e.Pointer.Capture(null);
         UpdateIdleCursor(e.GetPosition(this));
-    }
-
-    private void BeginHandleInteraction(Annotation ann, AnnotationHandle h, Point pos)
-    {
-        _target = ann;
-        _activeHandle = h;
-        _dragStart = pos;
-        _startW = ann.WidthPt;
-        _startH = ann.HeightPt;
-        _startX = ann.X;
-        _startY = ann.Y;
-        _startRot = ann.Rotation;
-
-        if (h == AnnotationHandle.Rotate)
-        {
-            _state = State.Rotating;
-            var rect = AnnotationHitTester.ScreenRect(ann, Scale);
-            var c = rect.Center;
-            _startAngle = Math.Atan2(pos.Y - c.Y, pos.X - c.X);
-        }
-        else
-        {
-            _state = State.Resizing;
-        }
-    }
-
-    private void DoResize(Point pos)
-    {
-        if (_target == null) return;
-
-        double rawDx = pos.X - _dragStart.X;
-        double rawDy = pos.Y - _dragStart.Y;
-
-        if (_target.Rotation != 0)
-        {
-            double a = -_target.Rotation * Math.PI / 180.0;
-            double cos = Math.Cos(a), sin = Math.Sin(a);
-            (rawDx, rawDy) = (rawDx * cos - rawDy * sin, rawDx * sin + rawDy * cos);
-        }
-
-        double dx = rawDx / Scale;
-        double dy = rawDy / Scale;
-
-        double sx = _activeHandle is AnnotationHandle.TL or AnnotationHandle.BL ? -1 : 1;
-        double sy = _activeHandle is AnnotationHandle.TL or AnnotationHandle.TR ? -1 : 1;
-
-        double newW, newH;
-
-        if (_target is SvgAnnotation && _startW > 0 && _startH > 0)
-        {
-            double origDiag = Math.Sqrt(_startW * _startW + _startH * _startH);
-            double diagDirX = sx * _startW / origDiag;
-            double diagDirY = sy * _startH / origDiag;
-            double proj = dx * diagDirX + dy * diagDirY;
-            double ratio = Math.Max(MinSizePt / Math.Min(_startW, _startH),
-                                    (origDiag + proj) / origDiag);
-            newW = _startW * ratio;
-            newH = _startH * ratio;
-        }
-        else
-        {
-            newW = Math.Max(MinSizePt, _startW + sx * dx);
-            newH = Math.Max(MinSizePt, _startH + sy * dy);
-        }
-
-        _target.WidthPt = newW;
-        _target.HeightPt = newH;
-
-        _target.X = sx < 0 ? _startX + _startW - newW : _startX;
-        _target.Y = sy < 0 ? _startY + _startH - newH : _startY;
-    }
-
-    private void DoRotate(Point pos)
-    {
-        if (_target == null) return;
-        var rect = AnnotationHitTester.ScreenRect(_target, Scale);
-        var c = rect.Center;
-        double current = Math.Atan2(pos.Y - c.Y, pos.X - c.X);
-        double delta = (current - _startAngle) * 180.0 / Math.PI;
-        _target.Rotation = _startRot + delta;
     }
 
     private void UpdateIdleCursor(Point pos)

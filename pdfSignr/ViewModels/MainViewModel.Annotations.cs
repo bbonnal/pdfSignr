@@ -64,6 +64,7 @@ public partial class MainViewModel
             var (x, y) = PagePlacement.ClampToPage(pdfX - w / 2, pdfY - h / 2, w, h, page.WidthPt, page.HeightPt);
             var annotation = new TextAnnotation
             {
+                Measurer = _fontCatalog,
                 X = x, Y = y,
                 PageIndex = pageIndex,
                 Text = "Text", FontFamily = _fontCatalog.PdfFontNames[0],
@@ -105,6 +106,7 @@ public partial class MainViewModel
                 pdfX - displayW / 2, pdfY - displayH / 2, displayW, displayH, page.WidthPt, page.HeightPt);
             var annotation = new SvgAnnotation
             {
+                Renderer = _svgRenderer,
                 X = sx, Y = sy,
                 PageIndex = pageIndex,
                 SvgFilePath = SignatureSvgPath,

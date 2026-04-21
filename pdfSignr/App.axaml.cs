@@ -24,10 +24,6 @@ public partial class App : Application
 
         AvaloniaXamlLoader.Load(this);
 
-        // Bootstrap Model-layer statics: Annotations cannot hold injected services. Set once at startup.
-        Models.TextAnnotation.Catalog = Services.GetRequiredService<IFontCatalog>();
-        Models.SvgAnnotation.Renderer = Services.GetRequiredService<ISvgRenderService>();
-
         GlobalFontSettings.FontResolver ??= Services.GetRequiredService<FontResolver>();
     }
 

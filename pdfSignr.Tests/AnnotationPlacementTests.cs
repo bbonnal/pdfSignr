@@ -51,6 +51,8 @@ public class AnnotationPlacementTests : IDisposable
 {
     private readonly string _dir;
     private readonly ITestOutputHelper _output;
+    private readonly FontCatalog _catalog;
+    private readonly SvgRenderService _svgRenderer;
 
     public AnnotationPlacementTests(ITestOutputHelper output)
     {
@@ -58,10 +60,10 @@ public class AnnotationPlacementTests : IDisposable
         _dir = Path.Combine(Path.GetTempPath(), "pdfSignr-place-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_dir);
 
-        var catalog = new FontCatalog();
+        _catalog = new FontCatalog();
+        _svgRenderer = new SvgRenderService(NullLogger<SvgRenderService>.Instance);
         if (GlobalFontSettings.FontResolver == null)
-            GlobalFontSettings.FontResolver = new FontResolver(catalog);
-        TextAnnotation.Catalog = catalog;
+            GlobalFontSettings.FontResolver = new FontResolver(_catalog);
     }
 
     public void Dispose()
@@ -135,6 +137,7 @@ public class AnnotationPlacementTests : IDisposable
 
         var text = new TextAnnotation
         {
+            Measurer = _catalog,
             X = 300, Y = 400,
             WidthPt = 50, HeightPt = 18,
             Text = "HELLO",
@@ -180,6 +183,7 @@ public class AnnotationPlacementTests : IDisposable
         {
             anns.Add(new TextAnnotation
             {
+                Measurer = _catalog,
                 X = 100, Y = y,
                 WidthPt = 200, HeightPt = 18,
                 Text = $"Y={y:F0}",
@@ -230,6 +234,7 @@ public class AnnotationPlacementTests : IDisposable
         {
             anns.Add(new TextAnnotation
             {
+                Measurer = _catalog,
                 X = 100, Y = y,
                 WidthPt = 200, HeightPt = 18,
                 Text = $"Y={y:F0}",
@@ -290,6 +295,7 @@ public class AnnotationPlacementTests : IDisposable
         {
             anns.Add(new TextAnnotation
             {
+                Measurer = _catalog,
                 X = x, Y = y,
                 WidthPt = 100, HeightPt = 18,
                 Text = lbl,
@@ -352,6 +358,7 @@ public class AnnotationPlacementTests : IDisposable
         };
         var anns = positions.Select(p => (Annotation)new TextAnnotation
         {
+            Measurer = _catalog,
             X = p.X, Y = p.Y, WidthPt = boxW, HeightPt = boxH,
             Text = p.label, FontFamily = "Helvetica", PageIndex = 0
         }).ToList();
@@ -426,6 +433,7 @@ public class AnnotationPlacementTests : IDisposable
         // Use the reported dimensions as the "original" dims that PageItem stores.
         var text = new TextAnnotation
         {
+            Measurer = _catalog,
             X = 300, Y = 400,
             WidthPt = 50, HeightPt = 18,
             Text = "HELLO-ROT",
@@ -463,6 +471,7 @@ public class AnnotationPlacementTests : IDisposable
         // User places annotation at X=300 Y=400 in the rotated view (612 wide original → rotated W=792).
         var text = new TextAnnotation
         {
+            Measurer = _catalog,
             X = 300, Y = 400,
             WidthPt = 50, HeightPt = 18,
             Text = "HELLO90",
@@ -501,6 +510,7 @@ public class AnnotationPlacementTests : IDisposable
         const double annX = 150, annY = 300, annW = 200, annH = 40;
         var ann = new TextAnnotation
         {
+            Measurer = _catalog,
             X = annX, Y = annY, WidthPt = annW, HeightPt = annH,
             Text = "Baseline", FontFamily = "Helvetica", PageIndex = 0
         };
@@ -508,7 +518,7 @@ public class AnnotationPlacementTests : IDisposable
         // UI baseline (ground truth): Avalonia FormattedText.Baseline is in DIPs at the
         // FormattedText's font size (which is scaled by DpiScale for display). Convert
         // back to PDF points to compare against the PDF output.
-        var typeface = new Avalonia.Media.Typeface(TextAnnotation.MapFontForMeasure(ann.FontFamily));
+        var typeface = ann.MeasureTypeface();
         var ft = new Avalonia.Media.FormattedText(
             ann.Text, System.Globalization.CultureInfo.InvariantCulture,
             Avalonia.Media.FlowDirection.LeftToRight, typeface,

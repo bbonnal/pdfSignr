@@ -17,9 +17,6 @@ internal static class TestHarness
         IDialogService? dialogs = null)
     {
         var settings = new StubSettings();
-        // TextAnnotation.FontSize touches the static catalog during UpdateStatusText. Set it
-        // once per process so tests can SelectAnnotation without tripping the guard.
-        TextAnnotation.Catalog ??= new StubFontCatalog();
         return new MainViewModel(
             fileDialogs ?? new StubFileDialogs(),
             new StubRenderService(),

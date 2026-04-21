@@ -100,10 +100,8 @@ internal static class AnnotationRenderer
 
     private static FormattedText MakeFormattedText(TextAnnotation t, double scale)
     {
-        var typeface = TextAnnotation.TypefaceCache.GetOrAdd(t.FontFamily,
-            ff => new Typeface(TextAnnotation.MapFontForMeasure(ff)));
         return new FormattedText(
             t.Text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-            typeface, t.FontSize * scale, Brushes.Black);
+            t.MeasureTypeface(), t.FontSize * scale, Brushes.Black);
     }
 }

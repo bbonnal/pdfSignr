@@ -24,14 +24,6 @@ public partial class MainWindow
     // Bounds concurrent pdfium calls to leave headroom for the UI thread.
     private readonly SemaphoreSlim _renderGate = new(Math.Max(1, Environment.ProcessorCount / 2));
 
-    // Keep pages near the viewport rendered; evict beyond the retention ring so
-    // memory stays O(window), not O(document).
-    private const int PrefetchRingRadius = 3;
-    private const int RetentionRingRadius = 12;
-
-    // Cap bitmap pixel count to prevent OOM on extreme zoom (4 bytes/pixel → 256 MB max).
-    private const long MaxBitmapPixels = 64L * 1024 * 1024;
-
     // Page offset cache for O(log n) visibility lookup (list mode only).
     // Invalidated by structure/rotation/zoom/grid changes.
     private double[] _pageTops = [];
@@ -153,7 +145,7 @@ public partial class MainWindow
 
     private void ScheduleRerender()
     {
-        int dpi = QuantizeDpi((int)(PdfConstants.RenderDpi * _zoom * _screenScaling));
+        int dpi = ViewportPolicy.QuantizeDpi((int)(PdfConstants.RenderDpi * _zoom * _screenScaling));
         if (dpi == _targetDpi) return;
         _targetDpi = dpi;
 
@@ -196,25 +188,10 @@ public partial class MainWindow
         timer.Start();
     }
 
-    private static int QuantizeDpi(int dpi)
-    {
-        // Snap to fixed steps to reduce re-render frequency,
-        // but scale without a hard cap so vector PDFs stay sharp at any zoom.
-        if (dpi <= 100) return 96;
-        if (dpi <= 150) return 150;
-        if (dpi <= 225) return 200;
-        if (dpi <= 350) return 300;
-        if (dpi <= 500) return 400;
-        if (dpi <= 700) return 600;
-        if (dpi <= 1000) return 800;
-        return 1200;
-    }
-
     internal HashSet<int> GetVisiblePageIndices()
     {
-        var visible = new HashSet<int>();
         int pageCount = ViewModel.Pages.Count;
-        if (pageCount == 0) return visible;
+        if (pageCount == 0) return new HashSet<int>();
 
         double viewportH = PdfScrollViewer.Viewport.Height;
 
@@ -223,34 +200,15 @@ public partial class MainWindow
         if (ViewModel.Viewport.IsGridMode)
             return GetVisiblePageIndicesByContainers(viewportH);
 
-        // List mode: build cache once, then O(log n) lookup.
+        // List mode: build cache once, then O(log n) lookup via ViewportPolicy.
         if (!_pageOffsetCacheValid || _pageTops.Length != pageCount)
         {
             if (!TryRebuildPageOffsetCache(pageCount))
                 return GetVisiblePageIndicesByContainers(viewportH);
         }
 
-        double scrollY = PdfScrollViewer.Offset.Y;
-        double topEdge = scrollY;
-        double bottomEdge = scrollY + viewportH;
-
-        // Binary search: find first page with top >= scrollY; visible range starts at max(0, idx-1).
-        int lo = 0, hi = pageCount;
-        while (lo < hi)
-        {
-            int mid = (lo + hi) >>> 1;
-            if (_pageTops[mid] < topEdge) lo = mid + 1;
-            else hi = mid;
-        }
-        int start = Math.Max(0, lo - 1);
-
-        for (int i = start; i < pageCount; i++)
-        {
-            if (_pageTops[i] > bottomEdge) break;
-            if (_pageTops[i] + _pageHeights[i] < topEdge) continue;
-            visible.Add(i);
-        }
-        return visible;
+        return new HashSet<int>(ViewportPolicy.VisibleIndices(
+            _pageTops, _pageHeights, PdfScrollViewer.Offset.Y, viewportH));
     }
 
     private HashSet<int> GetVisiblePageIndicesByContainers(double viewportH)
@@ -308,17 +266,6 @@ public partial class MainWindow
         return true;
     }
 
-    // Clamp DPI so a single rendered bitmap stays under MaxBitmapPixels.
-    // pixels = widthPt*heightPt * dpi² / 72² → dpi_max = sqrt(MaxPixels * 72² / area)
-    private static int ClampDpiForPage(int requestedDpi, double widthPt, double heightPt)
-    {
-        double area = widthPt * heightPt;
-        if (area <= 0) return requestedDpi;
-        double maxDpi = Math.Sqrt(MaxBitmapPixels * 72.0 * 72.0 / area);
-        int clamped = (int)Math.Min(requestedDpi, maxDpi);
-        return Math.Max(72, clamped);
-    }
-
     private async Task RerenderVisibleAsync()
     {
         _rerenderCts?.Cancel();
@@ -337,10 +284,8 @@ public partial class MainWindow
         // Expand visible set into prefetch (render) and retention (keep-alive) rings.
         int minVisible = visible.Count > 0 ? visible.Min() : 0;
         int maxVisible = visible.Count > 0 ? visible.Max() : 0;
-        int prefetchMin = Math.Max(0, minVisible - PrefetchRingRadius);
-        int prefetchMax = Math.Min(pageCount - 1, maxVisible + PrefetchRingRadius);
-        int retentionMin = Math.Max(0, minVisible - RetentionRingRadius);
-        int retentionMax = Math.Min(pageCount - 1, maxVisible + RetentionRingRadius);
+        var (prefetchMin, prefetchMax) = ViewportPolicy.ExpandRing(minVisible, maxVisible, ViewportPolicy.PrefetchRingRadius, pageCount);
+        var (retentionMin, retentionMax) = ViewportPolicy.ExpandRing(minVisible, maxVisible, ViewportPolicy.RetentionRingRadius, pageCount);
 
         // Evict bitmaps outside the retention ring so memory stays bounded.
         for (int i = 0; i < pageCount; i++)
@@ -357,7 +302,7 @@ public partial class MainWindow
         for (int i = prefetchMin; i <= prefetchMax; i++)
         {
             var page = pages[i];
-            int effDpi = ClampDpiForPage(dpi, page.WidthPt, page.HeightPt);
+            int effDpi = ViewportPolicy.ClampDpiForPage(dpi, page.WidthPt, page.HeightPt);
             if (!_pageDpi.TryGetValue(page, out var cur) || cur != effDpi)
                 pagesToRender.Add((page, effDpi));
         }
@@ -483,7 +428,7 @@ public partial class MainWindow
 
     private async void OnPageRotated(PageItem page)
     {
-        int dpi = ClampDpiForPage(_targetDpi, page.WidthPt, page.HeightPt);
+        int dpi = ViewportPolicy.ClampDpiForPage(_targetDpi, page.WidthPt, page.HeightPt);
         var renderService = ViewModel.RenderService;
         _pageOffsetCacheValid = false;
         try
