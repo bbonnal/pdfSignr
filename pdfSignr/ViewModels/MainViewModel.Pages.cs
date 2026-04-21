@@ -171,53 +171,36 @@ public partial class MainViewModel
 
     private void RotatePage(PageItem page, int degrees)
     {
-        int oldRotation = page.RotationDegrees;
-        double oldW = page.WidthPt;
-        double oldH = page.HeightPt;
-
-        var annSnapsBefore = page.Annotations.Select(a => (Ann: a, a.X, a.Y)).ToList();
-
-        page.RotateAnnotations(degrees, oldW, oldH);
-        page.RotationDegrees = (page.RotationDegrees + degrees) % 360;
-        int newRotation = page.RotationDegrees;
-
-        var annSnapsAfter = page.Annotations.Select(a => (Ann: a, a.X, a.Y)).ToList();
-
-        PageRotated?.Invoke(page);
-
-        var state = new RotatePagesCommand.PageState(
-            page, oldRotation, newRotation, annSnapsBefore, annSnapsAfter);
-        UndoRedo.Push(new RotatePagesCommand("Rotate page", [state], p => PageRotated?.Invoke(p)));
+        var state = BuildRotateState(page, degrees);
+        UndoRedo.Execute(new RotatePagesCommand("Rotate page", [state], p => PageRotated?.Invoke(p)));
     }
 
     private void RotateSelectedPages(int degrees)
     {
         var selected = SelectedPages.ToList();
-        var before = selected.Select(p => new
+        var states = selected.Select(p => BuildRotateState(p, degrees)).ToList();
+        UndoRedo.Execute(new RotatePagesCommand(
+            $"Rotate {selected.Count} pages", states, p => PageRotated?.Invoke(p)));
+    }
+
+    // Pre-computes the rotated state without mutating anything. The command's Execute
+    // applies it atomically — so a mid-loop failure never leaves half-rotated pages
+    // without a matching undo entry.
+    private static RotatePagesCommand.PageState BuildRotateState(PageItem page, int degrees)
+    {
+        int oldRotation = page.RotationDegrees;
+        int newRotation = (oldRotation + degrees) % 360;
+        double oldW = page.WidthPt;
+        double oldH = page.HeightPt;
+
+        var annsBefore = page.Annotations.Select(a => (Ann: a, a.X, a.Y)).ToList();
+        var annsAfter = page.Annotations.Select(a =>
         {
-            Page = p,
-            OldRotation = p.RotationDegrees,
-            OldW = p.WidthPt,
-            OldH = p.HeightPt,
-            AnnsBefore = p.Annotations.Select(a => (Ann: a, a.X, a.Y)).ToList()
+            var (nx, ny) = PageItem.RotatedPosition(degrees, a.X, a.Y, a.WidthPt, a.HeightPt, oldW, oldH);
+            return (Ann: a, X: nx, Y: ny);
         }).ToList();
 
-        foreach (var s in before)
-        {
-            s.Page.RotateAnnotations(degrees, s.OldW, s.OldH);
-            s.Page.RotationDegrees = (s.Page.RotationDegrees + degrees) % 360;
-        }
-
-        var states = before.Select(s => new RotatePagesCommand.PageState(
-            s.Page, s.OldRotation, s.Page.RotationDegrees, s.AnnsBefore,
-            s.Page.Annotations.Select(a => (Ann: a, a.X, a.Y)).ToList()))
-            .ToList();
-
-        foreach (var s in states)
-            PageRotated?.Invoke(s.Page);
-
-        UndoRedo.Push(new RotatePagesCommand(
-            $"Rotate {selected.Count} pages", states, p => PageRotated?.Invoke(p)));
+        return new RotatePagesCommand.PageState(page, oldRotation, newRotation, annsBefore, annsAfter);
     }
 
     public void RenumberPages()

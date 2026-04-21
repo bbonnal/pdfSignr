@@ -70,7 +70,7 @@ public partial class MainViewModel
             {
                 return await Task.Run(() => work(password));
             }
-            catch (Exception ex) when (IsPasswordError(ex))
+            catch (Exception ex) when (PasswordErrorDetection.IsPasswordError(ex))
             {
                 if (++attempts > maxAttempts)
                 {
@@ -90,21 +90,6 @@ public partial class MainViewModel
                 showError = true;
             }
         }
-    }
-
-    private static bool IsPasswordError(Exception? ex)
-    {
-        // pdfium (PDFtoImage) wraps errors — walk the full exception chain
-        while (ex != null)
-        {
-            var msg = ex.Message;
-            if (msg.Contains("password", StringComparison.OrdinalIgnoreCase)
-                || msg.Contains("encrypted", StringComparison.OrdinalIgnoreCase)
-                || msg.Contains("FPDF_ERR_PASSWORD", StringComparison.OrdinalIgnoreCase))
-                return true;
-            ex = ex.InnerException;
-        }
-        return false;
     }
 
     private PageItem[] CreatePageItems(byte[] pdfBytes, int startIndex = 0, string? password = null)

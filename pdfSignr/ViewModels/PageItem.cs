@@ -32,28 +32,15 @@ public partial class PageItem : ObservableObject
         OnPropertyChanged(nameof(HeightPt));
     }
 
-    public void RotateAnnotations(int degrees, double oldW, double oldH)
+    /// <summary>Computes an annotation's post-rotation (X, Y) without mutating state.</summary>
+    public static (double X, double Y) RotatedPosition(
+        int degrees, double x, double y, double w, double h, double oldW, double oldH) => degrees switch
     {
-        foreach (var ann in Annotations)
-        {
-            var (x, y, w, h) = (ann.X, ann.Y, ann.WidthPt, ann.HeightPt);
-            switch (degrees)
-            {
-                case 90:
-                    ann.X = oldH - y - h;
-                    ann.Y = x;
-                    break;
-                case 180:
-                    ann.X = oldW - x - w;
-                    ann.Y = oldH - y - h;
-                    break;
-                case 270:
-                    ann.X = y;
-                    ann.Y = oldW - x - w;
-                    break;
-            }
-        }
-    }
+        90 => (oldH - y - h, x),
+        180 => (oldW - x - w, oldH - y - h),
+        270 => (y, oldW - x - w),
+        _ => (x, y)
+    };
 
     /// <summary>
     /// Deep copy suitable for a paste operation: same source PDF bytes and rotation,

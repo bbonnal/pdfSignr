@@ -61,10 +61,10 @@ public partial class MainViewModel
         if (CurrentTool == ToolMode.Text)
         {
             const double w = 50, h = 18;
+            var (x, y) = PagePlacement.ClampToPage(pdfX - w / 2, pdfY - h / 2, w, h, page.WidthPt, page.HeightPt);
             var annotation = new TextAnnotation
             {
-                X = Math.Clamp(pdfX - w / 2, 0, Math.Max(0, page.WidthPt - w)),
-                Y = Math.Clamp(pdfY - h / 2, 0, Math.Max(0, page.HeightPt - h)),
+                X = x, Y = y,
                 PageIndex = pageIndex,
                 Text = "Text", FontFamily = _fontCatalog.PdfFontNames[0],
                 HeightPt = h, WidthPt = w
@@ -101,10 +101,11 @@ public partial class MainViewModel
                 ? _svgRenderer.ResampleForDisplay(SignatureSvgPath, displayW, displayH, PdfConstants.RenderDpi)
                 : _svgRenderer.RenderForDisplay(SignatureSvgPath, fitScale, PdfConstants.RenderDpi);
 
+            var (sx, sy) = PagePlacement.ClampToPage(
+                pdfX - displayW / 2, pdfY - displayH / 2, displayW, displayH, page.WidthPt, page.HeightPt);
             var annotation = new SvgAnnotation
             {
-                X = Math.Clamp(pdfX - displayW / 2, 0, Math.Max(0, page.WidthPt - displayW)),
-                Y = Math.Clamp(pdfY - displayH / 2, 0, Math.Max(0, page.HeightPt - displayH)),
+                X = sx, Y = sy,
                 PageIndex = pageIndex,
                 SvgFilePath = SignatureSvgPath,
                 IsRaster = isRaster,

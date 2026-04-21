@@ -266,8 +266,8 @@ public class PageCanvas : Control
 
         if (_state == State.Dragging && _target != null)
         {
-            _target.X = Math.Clamp(_target.X, 0, Math.Max(0, PageWidthPt - _target.WidthPt));
-            _target.Y = Math.Clamp(_target.Y, 0, Math.Max(0, PageHeightPt - _target.HeightPt));
+            (_target.X, _target.Y) = PagePlacement.ClampToPage(
+                _target.X, _target.Y, _target.WidthPt, _target.HeightPt, PageWidthPt, PageHeightPt);
         }
 
         if (_state == State.Resizing && _target is SvgAnnotation svg)

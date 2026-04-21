@@ -41,8 +41,8 @@ public partial class MainWindow
     // Fixed arrow column width in layout units (scales with zoom like the page)
     private const double ArrowColumnLayoutWidth = 34;
 
-    private double NextZoomIn() => System.Math.Clamp(_zoom * ZoomFactor, MinZoom, MaxZoom);
-    private double NextZoomOut() => System.Math.Clamp(_zoom / ZoomFactor, MinZoom, MaxZoom);
+    private double NextZoomIn() => _zoom * ZoomFactor;
+    private double NextZoomOut() => _zoom / ZoomFactor;
 
     private void OnScrollWheel(object? sender, PointerWheelEventArgs e)
     {
@@ -53,10 +53,11 @@ public partial class MainWindow
         e.Handled = true;
     }
 
+    // ApplyZoom is the single zoom-clamp authority — callers pass raw values.
     private void ApplyZoom(double level, Point? anchor = null)
     {
         double oldZoom = _zoom;
-        _zoom = level;
+        _zoom = System.Math.Clamp(level, MinZoom, MaxZoom);
 
         // Compute content point under anchor before zoom
         double anchorContentX = 0, anchorContentY = 0;
@@ -114,7 +115,7 @@ public partial class MainWindow
         var viewportCenter = new Point(
             PdfScrollViewer.Viewport.Width / 2,
             PdfScrollViewer.Viewport.Height / 2);
-        ApplyZoom(System.Math.Clamp(available / totalLayoutWidth, MinZoom, MaxZoom), viewportCenter);
+        ApplyZoom(available / totalLayoutWidth, viewportCenter);
     }
 
     public void FitToHeight()
@@ -135,7 +136,7 @@ public partial class MainWindow
         var viewportCenter = new Point(
             PdfScrollViewer.Viewport.Width / 2,
             PdfScrollViewer.Viewport.Height / 2);
-        ApplyZoom(System.Math.Clamp(available / pageScreenHeight, MinZoom, MaxZoom), viewportCenter);
+        ApplyZoom(available / pageScreenHeight, viewportCenter);
 
         // Snap to the anchor page's top so a full page is visible
         ZoomTransform.UpdateLayout();

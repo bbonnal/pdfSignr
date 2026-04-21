@@ -46,8 +46,9 @@ public partial class MainViewModel
         var clone = original.Clone();
         // Offset slightly so the paste is visible instead of sitting on top of the original,
         // clamped to the page so rotated pastes don't fall off.
-        clone.X = Math.Clamp(clone.X + PasteOffsetPt, 0, Math.Max(0, targetPage.WidthPt - clone.WidthPt));
-        clone.Y = Math.Clamp(clone.Y + PasteOffsetPt, 0, Math.Max(0, targetPage.HeightPt - clone.HeightPt));
+        (clone.X, clone.Y) = PagePlacement.ClampToPage(
+            clone.X + PasteOffsetPt, clone.Y + PasteOffsetPt,
+            clone.WidthPt, clone.HeightPt, targetPage.WidthPt, targetPage.HeightPt);
         clone.PageIndex = targetPage.Index;
 
         UndoRedo.Execute(new AddAnnotationCommand(this, targetPage, clone));

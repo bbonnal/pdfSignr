@@ -77,7 +77,7 @@ public partial class App : Application
         // ViewModels
         services.AddSingleton<ViewportViewModel>();
         services.AddSingleton<MainViewModel>();
-        services.AddTransient<UndoRedoService>();
+        services.AddSingleton<UndoRedoService>();
 
         // Views
         services.AddSingleton<MainWindow>();
