@@ -66,8 +66,7 @@ public partial class MainWindow
         _pageOffsetCacheValid = false;
         ViewModel.Viewport.ButtonScale = 1.0 / _zoom;
         ViewModel.Viewport.SelectionBorderThickness = new Thickness(3.0 / _zoom);
-        ViewModel.Viewport.HitBorderThickness = new Thickness(28.0 / _zoom);
-        ViewModel.Viewport.HitBorderMargin = new Thickness(-28.0 / _zoom);
+        UpdateHitBorderMetrics();
         ViewModel.Viewport.ZoomPercent = (int)System.Math.Round(_zoom * 100);
         ViewModel.UpdateStatusText();
 
@@ -487,8 +486,24 @@ public partial class MainWindow
         // Grid switch invalidates the page-offset cache (different layout + heights).
         _pageOffsetCacheValid = false;
 
+        // Hit-border extends orthogonally to the inter-page insert buttons
+        // so it never covers their click area.
+        UpdateHitBorderMetrics();
+
         // Visible pages change when layout switches, schedule re-render
         ScheduleRerender();
+    }
+
+    private void UpdateHitBorderMetrics()
+    {
+        double h = 28.0 / _zoom;
+        // List mode: insert buttons sit above/below pages — extend only horizontally.
+        // Grid mode: insert buttons sit to the right — extend only vertically.
+        (double left, double top, double right, double bottom) = ViewModel.Viewport.IsGridMode
+            ? (0.0, h, 0.0, h)
+            : (h, 0.0, h, 0.0);
+        ViewModel.Viewport.HitBorderThickness = new Thickness(left, top, right, bottom);
+        ViewModel.Viewport.HitBorderMargin = new Thickness(-left, -top, -right, -bottom);
     }
 
     // ═══ Zoom buttons ═══
